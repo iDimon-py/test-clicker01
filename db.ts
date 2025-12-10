@@ -1,109 +1,137 @@
+import { createClient } from '@supabase/supabase-js';
 import { UserData } from './types';
 import { MAX_ENERGY } from './constants';
 
-const DB_KEY = 'cosmic_clicker_db_v2';
+// --- CONFIGURATION ---
+const SUPABASE_URL = 'https://tacmjrrbmngeyuhtvfvt.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_pQna21s2Z6Dv1hTDLnfZPA_qaeTr3U9';
 const SESSION_KEY = 'cosmic_clicker_session_user';
 
-// In-memory fallback if localStorage fails
-let memoryDB: Record<string, UserData> = {};
-let memorySession: string | null = null;
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const isLocalStorageAvailable = () => {
-  try {
-    const test = '__storage_test__';
-    localStorage.setItem(test, test);
-    localStorage.removeItem(test);
-    return true;
-  } catch (e) {
-    return false;
-  }
+// --- HELPER TYPES ---
+// Matches the structure in Supabase (snake_case)
+interface DBUser {
+  username: string;
+  score: number;
+  energy: number;
+  last_updated: number;
+  last_reward_time: number;
+}
+
+// Convert DB format (snake_case) to App format (camelCase)
+const mapFromDB = (data: DBUser): UserData => ({
+  username: data.username,
+  score: data.score,
+  energy: data.energy,
+  lastUpdated: data.last_updated,
+  lastRewardTime: data.last_reward_time,
+});
+
+// Convert App format to DB format
+const mapToDB = (data: Partial<UserData>): Partial<DBUser> => {
+  const mapped: Partial<DBUser> = {};
+  if (data.username !== undefined) mapped.username = data.username;
+  if (data.score !== undefined) mapped.score = data.score;
+  if (data.energy !== undefined) mapped.energy = data.energy;
+  if (data.lastUpdated !== undefined) mapped.last_updated = data.lastUpdated;
+  if (data.lastRewardTime !== undefined) mapped.last_reward_time = data.lastRewardTime;
+  return mapped;
 };
 
-const hasStorage = isLocalStorageAvailable();
+// --- PUBLIC API ---
 
-// Helper to get all data
-const getDB = (): Record<string, UserData> => {
-  if (!hasStorage) return memoryDB;
+export const loginUser = async (username: string): Promise<UserData | null> => {
   try {
-    const data = localStorage.getItem(DB_KEY);
-    return data ? JSON.parse(data) : {};
-  } catch {
-    return {};
-  }
-};
+    // 1. Try to fetch existing user
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('username', username)
+      .single();
 
-// Helper to save all data
-const saveDB = (data: Record<string, UserData>) => {
-  if (!hasStorage) {
-    memoryDB = data;
-    return;
-  }
-  try {
-    localStorage.setItem(DB_KEY, JSON.stringify(data));
-  } catch (e) {
-    console.warn('Failed to save to localStorage', e);
-  }
-};
+    if (error && error.code !== 'PGRST116') { // PGRST116 is "Row not found"
+       console.error("Error fetching user:", error);
+       throw error;
+    }
 
-export const loginUser = (username: string): UserData => {
-  const db = getDB();
-  
-  // Save session for auto-login
-  if (hasStorage) {
+    // 2. If user exists, return data
+    if (data) {
+      localStorage.setItem(SESSION_KEY, username);
+      return mapFromDB(data as DBUser);
+    }
+
+    // 3. If not, create new user
+    const newUser: DBUser = {
+      username,
+      score: 0,
+      energy: MAX_ENERGY,
+      last_updated: Date.now(),
+      last_reward_time: 0
+    };
+
+    const { error: insertError } = await supabase
+      .from('users')
+      .insert([newUser]);
+
+    if (insertError) {
+        console.error("Error creating user:", insertError);
+        throw insertError;
+    }
+
     localStorage.setItem(SESSION_KEY, username);
-  } else {
-    memorySession = username;
-  }
-  
-  if (db[username]) {
-    return db[username];
-  }
+    return mapFromDB(newUser);
 
-  // Create new user
-  const newUser: UserData = {
-    username,
-    score: 0,
-    energy: MAX_ENERGY,
-    lastUpdated: Date.now(),
-    lastRewardTime: 0
-  };
-
-  db[username] = newUser;
-  saveDB(db);
-  return newUser;
-};
-
-export const getSessionUser = (): UserData | null => {
-  try {
-    const username = hasStorage ? localStorage.getItem(SESSION_KEY) : memorySession;
-    if (!username) return null;
-    
-    const db = getDB();
-    return db[username] || null;
-  } catch {
+  } catch (e) {
+    console.error("Login failed", e);
     return null;
   }
 };
 
+export const getSessionUser = async (): Promise<UserData | null> => {
+  const username = localStorage.getItem(SESSION_KEY);
+  if (!username) return null;
+
+  const { data } = await supabase
+    .from('users')
+    .select('*')
+    .eq('username', username)
+    .single();
+
+  if (data) {
+      return mapFromDB(data as DBUser);
+  }
+  return null;
+};
+
 export const logoutUser = () => {
-  if (hasStorage) {
-    localStorage.removeItem(SESSION_KEY);
-  } else {
-    memorySession = null;
+  localStorage.removeItem(SESSION_KEY);
+};
+
+export const updateUserProgress = async (username: string, data: Partial<UserData>) => {
+  const dbData = mapToDB({ ...data, lastUpdated: Date.now() });
+  
+  const { error } = await supabase
+    .from('users')
+    .update(dbData)
+    .eq('username', username);
+
+  if (error) {
+      console.error("Failed to update progress", error);
   }
 };
 
-export const updateUserProgress = (username: string, data: Partial<UserData>) => {
-  const db = getDB();
-  if (db[username]) {
-    db[username] = { ...db[username], ...data, lastUpdated: Date.now() };
-    saveDB(db);
-  }
-};
+export const getLeaderboard = async (): Promise<UserData[]> => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .order('score', { ascending: false })
+    .limit(50);
 
-export const getLeaderboard = (): UserData[] => {
-  const db = getDB();
-  const users = Object.values(db);
-  // Sort by score descending
-  return users.sort((a, b) => b.score - a.score).slice(0, 50); // Top 50
+  if (error) {
+      console.error("Failed to fetch leaderboard", error);
+      return [];
+  }
+
+  return (data as DBUser[]).map(mapFromDB);
 };

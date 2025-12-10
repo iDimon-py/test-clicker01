@@ -12,12 +12,13 @@ import {
 } from './constants';
 import { FloatingText, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, Clock, Users, X, LogIn, Gamepad2 } from 'lucide-react';
+import { Trophy, Gift, Clock, Users, X, LogIn, Gamepad2, Loader2 } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
   const [usernameInput, setUsernameInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoginProcessing, setIsLoginProcessing] = useState(false);
   
   // Game State
   const [score, setScore] = useState<number>(0);
@@ -29,40 +30,28 @@ export default function App() {
   const [timeRemaining, setTimeRemaining] = useState<string>("");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboardData, setLeaderboardData] = useState<UserData[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   
   const textIdRef = useRef(0);
 
   // Initial Auto-Login Check
   useEffect(() => {
-    const savedUser = DB.getSessionUser();
-    if (savedUser) {
-      setCurrentUser(savedUser);
-      setScore(savedUser.score);
-      setLastRewardTime(savedUser.lastRewardTime);
-      
-      // Calculate offline energy
-      const now = Date.now();
-      const lastUpdated = savedUser.lastUpdated || now;
-      const timeDiff = now - lastUpdated;
-      const cycles = Math.floor(timeDiff / ENERGY_REGEN_RATE_MS);
-      const offlineRegen = cycles * ENERGY_REGEN_AMOUNT;
-      
-      setEnergy(Math.min(MAX_ENERGY, savedUser.energy + offlineRegen));
-    }
-    setIsLoading(false);
+    const initSession = async () => {
+      const savedUser = await DB.getSessionUser();
+      if (savedUser) {
+        setupUser(savedUser);
+      }
+      setIsLoading(false);
+    };
+    initSession();
   }, []);
 
-  // Login Handler
-  const handleLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!usernameInput.trim()) return;
-
-    const user = DB.loginUser(usernameInput.trim());
+  const setupUser = (user: UserData) => {
     setCurrentUser(user);
-    
     setScore(user.score);
     setLastRewardTime(user.lastRewardTime);
-
+    
+    // Calculate offline energy
     const now = Date.now();
     const lastUpdated = user.lastUpdated || now;
     const timeDiff = now - lastUpdated;
@@ -72,22 +61,48 @@ export default function App() {
     setEnergy(Math.min(MAX_ENERGY, user.energy + offlineRegen));
   };
 
+  // Login Handler
+  const handleLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!usernameInput.trim()) return;
+
+    setIsLoginProcessing(true);
+    const user = await DB.loginUser(usernameInput.trim());
+    setIsLoginProcessing(false);
+
+    if (user) {
+      setupUser(user);
+    } else {
+        alert("Connection error. Please try again.");
+    }
+  };
+
   const handleLogout = () => {
     DB.logoutUser();
     setCurrentUser(null);
     setShowLeaderboard(false);
     setUsernameInput('');
+    setScore(0);
+    setEnergy(MAX_ENERGY);
   };
 
-  // Sync with DB
+  // Sync with DB - DEBOUNCED / PERIODIC
+  // Instead of syncing every render, we sync every 3 seconds if data changed
   useEffect(() => {
     if (!currentUser) return;
-    DB.updateUserProgress(currentUser.username, {
-      score,
-      energy,
-      lastRewardTime
-    });
-  }, [score, energy, lastRewardTime, currentUser]);
+
+    const syncInterval = setInterval(() => {
+        // We just blindly send current state to DB every few seconds
+        // Supabase handles this fine, and it prevents lag on click
+        DB.updateUserProgress(currentUser.username, {
+            score,
+            energy,
+            lastRewardTime
+        });
+    }, 3000); // Save every 3 seconds
+
+    return () => clearInterval(syncInterval);
+  }, [currentUser, score, energy, lastRewardTime]);
 
   // Energy Regen Loop
   useEffect(() => {
@@ -129,9 +144,13 @@ export default function App() {
   // Leaderboard data fetch
   useEffect(() => {
     if (showLeaderboard) {
-      setLeaderboardData(DB.getLeaderboard());
+      setLeaderboardLoading(true);
+      DB.getLeaderboard().then(data => {
+          setLeaderboardData(data);
+          setLeaderboardLoading(false);
+      });
     }
-  }, [showLeaderboard, score]);
+  }, [showLeaderboard]);
 
   // Click Interaction
   const handleTap = (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
@@ -185,7 +204,12 @@ export default function App() {
   };
 
   if (isLoading) {
-    return <div className="min-h-screen w-full bg-black flex items-center justify-center text-white">Loading...</div>;
+    return (
+        <div className="min-h-screen w-full bg-black flex flex-col items-center justify-center text-white gap-4">
+            <Loader2 className="w-10 h-10 animate-spin text-cyan-500" />
+            <span className="text-slate-400 font-mono">Connecting to Universe...</span>
+        </div>
+    );
   }
 
   // --- LOGIN SCREEN ---
@@ -216,15 +240,20 @@ export default function App() {
                   onChange={(e) => setUsernameInput(e.target.value)}
                   className="w-full bg-slate-800/50 border border-slate-600 rounded-xl px-4 py-3 text-center text-lg font-bold placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all text-white"
                   autoFocus
+                  disabled={isLoginProcessing}
                 />
               </div>
               <button 
                 type="submit"
-                disabled={!usernameInput.trim()}
+                disabled={!usernameInput.trim() || isLoginProcessing}
                 className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-900/40 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <LogIn className="w-5 h-5" />
-                Start Journey
+                {isLoginProcessing ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                    <LogIn className="w-5 h-5" />
+                )}
+                {isLoginProcessing ? 'Connecting...' : 'Start Journey'}
               </button>
             </form>
          </div>
@@ -338,41 +367,50 @@ export default function App() {
                     </button>
                 </div>
 
-                <div className="space-y-3 relative z-10 overflow-y-auto pr-2 custom-scrollbar">
-                    {leaderboardData.length === 0 && (
-                        <div className="text-center text-slate-500 py-4">No players yet.</div>
+                <div className="space-y-3 relative z-10 overflow-y-auto pr-2 custom-scrollbar min-h-[200px]">
+                    {leaderboardLoading ? (
+                        <div className="flex flex-col items-center justify-center h-40 gap-3 text-slate-400">
+                            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                            <span>Loading Galaxy Rank...</span>
+                        </div>
+                    ) : (
+                        <>
+                            {leaderboardData.length === 0 && (
+                                <div className="text-center text-slate-500 py-4">No players yet.</div>
+                            )}
+                            {leaderboardData.map((user, index) => {
+                                const isMe = user.username === currentUser.username;
+                                return (
+                                <div 
+                                    key={user.username} 
+                                    className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                                        isMe
+                                        ? 'bg-blue-600/20 border-blue-500/50 scale-[1.01] shadow-[0_0_15px_rgba(59,130,246,0.2)] sticky top-0 z-20 backdrop-blur-md' 
+                                        : 'bg-slate-800/50 border-slate-700/50'
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <span className={`text-lg font-bold w-6 flex justify-center ${
+                                            index === 0 ? 'text-yellow-400' : 
+                                            index === 1 ? 'text-slate-300' : 
+                                            index === 2 ? 'text-amber-600' : 'text-slate-500'
+                                        }`}>
+                                            {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
+                                        </span>
+                                        <div className="flex flex-col">
+                                            <span className={`font-semibold truncate max-w-[120px] ${isMe ? 'text-blue-200' : 'text-slate-200'}`}>
+                                                {user.username} {isMe && '(You)'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <span className="font-mono font-bold text-slate-300">
+                                        {user.score.toLocaleString()}
+                                    </span>
+                                </div>
+                                );
+                            })}
+                        </>
                     )}
-                    {leaderboardData.map((user, index) => {
-                        const isMe = user.username === currentUser.username;
-                        return (
-                          <div 
-                              key={user.username} 
-                              className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                                  isMe
-                                  ? 'bg-blue-600/20 border-blue-500/50 scale-[1.01] shadow-[0_0_15px_rgba(59,130,246,0.2)] sticky top-0 z-20 backdrop-blur-md' 
-                                  : 'bg-slate-800/50 border-slate-700/50'
-                              }`}
-                          >
-                              <div className="flex items-center gap-3">
-                                  <span className={`text-lg font-bold w-6 flex justify-center ${
-                                      index === 0 ? 'text-yellow-400' : 
-                                      index === 1 ? 'text-slate-300' : 
-                                      index === 2 ? 'text-amber-600' : 'text-slate-500'
-                                  }`}>
-                                      {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
-                                  </span>
-                                  <div className="flex flex-col">
-                                      <span className={`font-semibold truncate max-w-[120px] ${isMe ? 'text-blue-200' : 'text-slate-200'}`}>
-                                          {user.username} {isMe && '(You)'}
-                                      </span>
-                                  </div>
-                              </div>
-                              <span className="font-mono font-bold text-slate-300">
-                                  {user.score.toLocaleString()}
-                              </span>
-                          </div>
-                        );
-                    })}
                 </div>
                 
                 <div className="mt-4 pt-4 border-t border-slate-800 text-center flex-none">
