@@ -26,4 +26,6 @@ export interface UserData {
   energy: number;
   lastUpdated: number;
   lastRewardTime: number;
+  ownedSkins: number[]; // Array of Skin IDs
+  currentSkin: number;  // ID of currently equipped skin
 }

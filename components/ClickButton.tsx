@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { SkinConfig } from '../constants';
 
 interface ClickButtonProps {
   onClick: (e: React.PointerEvent<HTMLDivElement>) => void;
   disabled: boolean;
   multiplier: number;
+  skin: SkinConfig;
 }
 
-export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, multiplier }) => {
+export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, multiplier, skin }) => {
   const buttonRef = useRef<HTMLDivElement>(null);
   const [transformStyle, setTransformStyle] = useState<string>('');
   const [isPressed, setIsPressed] = useState(false);
@@ -60,7 +62,7 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
   return (
     <div className="relative flex items-center justify-center w-full h-full max-h-[400px] aspect-square">
       {/* Background Glow Ring */}
-      <div className={`absolute inset-0 rounded-full blur-[60px] transition-all duration-500 ${disabled ? 'bg-red-900/20' : multiplier > 1 ? 'bg-yellow-500/40 animate-pulse' : 'bg-blue-600/30'}`} />
+      <div className={`absolute inset-0 rounded-full blur-[60px] transition-all duration-500 ${disabled ? 'bg-red-900/20' : multiplier > 1 ? 'bg-yellow-500/40 animate-pulse' : skin.colors.glow}`} />
 
       <div
         ref={buttonRef}
@@ -79,34 +81,53 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
         {/* Outer Ring / Rim */}
         <div className={`
             absolute inset-0 rounded-full border-4 
-            ${multiplier > 1 ? 'border-yellow-500/80' : 'border-slate-800/80'} 
+            ${multiplier > 1 ? 'border-yellow-500/80' : skin.colors.ring} 
             bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden z-10 transition-colors duration-300 pointer-events-none
         `}>
              {/* Inner Gradient - Planet Core */}
             <div className={`
                 w-full h-full rounded-full bg-gradient-to-br 
-                ${disabled ? 'from-slate-700 to-slate-900' : multiplier > 1 ? 'from-yellow-400 via-orange-500 to-red-600' : 'from-cyan-500 via-blue-600 to-purple-700'} 
+                ${disabled ? 'from-slate-700 to-slate-900' : multiplier > 1 ? 'from-yellow-400 via-orange-500 to-red-600' : `${skin.colors.gradientFrom} via-slate-800 ${skin.colors.gradientTo}`} 
                 opacity-90 relative overflow-hidden transition-colors duration-500
             `}>
                 
                 {/* Surface Texture */}
                 <div className="absolute inset-0 opacity-30 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] mix-blend-overlay"></div>
                 
+                {/* ENGRAVED ICON OVERLAY */}
+                {!disabled && skin.iconPath && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                     <svg 
+                        viewBox="0 0 24 24" 
+                        className={`w-3/5 h-3/5 opacity-40 mix-blend-overlay drop-shadow-md transition-all duration-500 ${isPressed ? 'scale-95 opacity-50' : 'scale-100'}`}
+                        style={{ filter: 'drop-shadow(0px 1px 0px rgba(255,255,255,0.3))' }}
+                     >
+                        <path 
+                          d={skin.iconPath} 
+                          fill="none" 
+                          stroke="white" 
+                          strokeWidth="0.8" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                        />
+                     </svg>
+                  </div>
+                )}
+                
                 {/* Center Anchor Point (The Cymbal Stand) */}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-black/20 rounded-full blur-md z-20"></div>
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white/10 rounded-full border border-white/20 z-30 shadow-inner"></div>
-
+                
                 {/* Shine reflection */}
-                <div className="absolute top-4 left-10 w-24 h-12 bg-white/20 blur-xl rounded-full transform -rotate-12"></div>
+                <div className="absolute top-4 left-10 w-24 h-12 bg-white/20 blur-xl rounded-full transform -rotate-12 z-30"></div>
                 
                 {/* Shadow */}
-                <div className="absolute bottom-0 right-0 w-full h-1/2 bg-black/40 blur-2xl rounded-full"></div>
+                <div className="absolute bottom-0 right-0 w-full h-1/2 bg-black/40 blur-2xl rounded-full z-10"></div>
             </div>
         </div>
 
         {/* Pulse Ring Animation */}
         {!disabled && (
-           <div className={`absolute -inset-4 rounded-full border-2 ${multiplier > 1 ? 'border-yellow-400/50' : 'border-cyan-500/30'} animate-pulse-glow z-0 pointer-events-none`}></div>
+           <div className={`absolute -inset-4 rounded-full border-2 ${multiplier > 1 ? 'border-yellow-400/50' : skin.colors.border} animate-pulse-glow z-0 pointer-events-none`}></div>
         )}
       </div>
     </div>

@@ -17,6 +17,8 @@ interface DBUser {
   energy: number;
   last_updated: number;
   last_reward_time: number;
+  owned_skins: number[];
+  current_skin: number;
 }
 
 const mapFromDB = (data: DBUser): UserData => ({
@@ -25,6 +27,8 @@ const mapFromDB = (data: DBUser): UserData => ({
   energy: data.energy,
   lastUpdated: data.last_updated,
   lastRewardTime: data.last_reward_time,
+  ownedSkins: data.owned_skins || [0], // Default to skin 0 if null
+  currentSkin: data.current_skin || 0,
 });
 
 const mapToDB = (data: Partial<UserData>): Partial<DBUser> => {
@@ -34,6 +38,8 @@ const mapToDB = (data: Partial<UserData>): Partial<DBUser> => {
   if (data.energy !== undefined) mapped.energy = data.energy;
   if (data.lastUpdated !== undefined) mapped.last_updated = data.lastUpdated;
   if (data.lastRewardTime !== undefined) mapped.last_reward_time = data.lastRewardTime;
+  if (data.ownedSkins !== undefined) mapped.owned_skins = data.ownedSkins;
+  if (data.currentSkin !== undefined) mapped.current_skin = data.currentSkin;
   return mapped;
 };
 
@@ -96,7 +102,9 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
         score: 0,
         energy: MAX_ENERGY,
         lastUpdated: Date.now(),
-        lastRewardTime: 0
+        lastRewardTime: 0,
+        ownedSkins: [0],
+        currentSkin: 0
       };
 
       const dbInitial = mapToDB(initialUser);
@@ -135,7 +143,9 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
     score: 0,
     energy: MAX_ENERGY,
     lastUpdated: Date.now(),
-    lastRewardTime: 0
+    lastRewardTime: 0,
+    ownedSkins: [0],
+    currentSkin: 0
   };
   
   saveToLocal(username, newLocalUser);

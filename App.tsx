@@ -8,11 +8,13 @@ import {
   ENERGY_COST_PER_CLICK,
   REWARD_COOLDOWN_MS,
   REWARD_MIN,
-  REWARD_MAX
+  REWARD_MAX,
+  SKINS,
+  SkinConfig
 } from './constants';
 import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket } from 'lucide-react';
+import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
@@ -27,6 +29,8 @@ export default function App() {
   const [lastRewardTime, setLastRewardTime] = useState<number>(0);
   const [multiplier, setMultiplier] = useState<number>(1);
   const [multiplierEndTime, setMultiplierEndTime] = useState<number>(0);
+  const [ownedSkins, setOwnedSkins] = useState<number[]>([0]);
+  const [currentSkinId, setCurrentSkinId] = useState<number>(0);
   
   // Bonus State
   const [showBonus, setShowBonus] = useState(false);
@@ -42,11 +46,18 @@ export default function App() {
 
   const [timeRemaining, setTimeRemaining] = useState<string>("");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showShop, setShowShop] = useState(false);
   const [leaderboardData, setLeaderboardData] = useState<UserData[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   
   const textIdRef = useRef(0);
+
+  // Derived State based on Skin
+  const activeSkin = SKINS.find(s => s.id === currentSkinId) || SKINS[0];
+  const maxEnergy = activeSkin.maxEnergy;
+  const regenRate = activeSkin.regenRateSec * 1000;
+  const skinClickValue = activeSkin.clickMultiplier;
 
   // Initial Auto-Login Check
   useEffect(() => {
@@ -65,15 +76,22 @@ export default function App() {
     setScore(user.score);
     setLastRewardTime(user.lastRewardTime);
     setIsOfflineMode(offline);
+    setOwnedSkins(user.ownedSkins || [0]);
+    setCurrentSkinId(user.currentSkin || 0);
     
-    // Calculate offline energy
+    // Calculate offline energy with current skin logic (approximation)
+    // Note: If they changed skin offline, this might be slightly off, but acceptable.
+    const userSkin = SKINS.find(s => s.id === (user.currentSkin || 0)) || SKINS[0];
+    const userMaxEnergy = userSkin.maxEnergy;
+    const userRegenRate = userSkin.regenRateSec * 1000;
+
     const now = Date.now();
     const lastUpdated = user.lastUpdated || now;
     const timeDiff = now - lastUpdated;
-    const cycles = Math.floor(timeDiff / ENERGY_REGEN_RATE_MS);
+    const cycles = Math.floor(timeDiff / userRegenRate);
     const offlineRegen = cycles * ENERGY_REGEN_AMOUNT;
     
-    setEnergy(Math.min(MAX_ENERGY, user.energy + offlineRegen));
+    setEnergy(Math.min(userMaxEnergy, user.energy + offlineRegen));
   };
 
   // Login Handler
@@ -103,11 +121,14 @@ export default function App() {
     DB.logoutUser();
     setCurrentUser(null);
     setShowLeaderboard(false);
+    setShowShop(false);
     setUsernameInput('');
     setScore(0);
     setEnergy(MAX_ENERGY);
     setLoginError(null);
     setIsOfflineMode(false);
+    setOwnedSkins([0]);
+    setCurrentSkinId(0);
   };
 
   // Sync with DB
@@ -118,26 +139,28 @@ export default function App() {
         DB.updateUserProgress(currentUser.username, {
             score,
             energy,
-            lastRewardTime
+            lastRewardTime,
+            ownedSkins,
+            currentSkin: currentSkinId
         });
     }, 3000); 
 
     return () => clearInterval(syncInterval);
-  }, [currentUser, score, energy, lastRewardTime]);
+  }, [currentUser, score, energy, lastRewardTime, ownedSkins, currentSkinId]);
 
-  // Energy Regen Loop
+  // Energy Regen Loop (Dynamic based on Skin)
   useEffect(() => {
     if (!currentUser) return;
 
     const timer = setInterval(() => {
       setEnergy((prevEnergy) => {
-        if (prevEnergy >= MAX_ENERGY) return MAX_ENERGY;
-        return Math.min(prevEnergy + ENERGY_REGEN_AMOUNT, MAX_ENERGY);
+        if (prevEnergy >= maxEnergy) return maxEnergy;
+        return Math.min(prevEnergy + ENERGY_REGEN_AMOUNT, maxEnergy);
       });
-    }, ENERGY_REGEN_RATE_MS);
+    }, regenRate); // Uses variable derived from state
 
     return () => clearInterval(timer);
-  }, [currentUser]);
+  }, [currentUser, maxEnergy, regenRate]);
 
   // Multiplier Timer Loop
   useEffect(() => {
@@ -156,9 +179,9 @@ export default function App() {
     if (!currentUser) return;
 
     const scheduleNextBonus = () => {
-        // Random time between 20 and 100 seconds
-        const minDelay = 20000;
-        const maxDelay = 100000;
+        // Random time between 30 and 120 seconds
+        const minDelay = 30000;
+        const maxDelay = 120000;
         const delay = Math.random() * (maxDelay - minDelay) + minDelay;
         
         return setTimeout(() => {
@@ -228,10 +251,29 @@ export default function App() {
   useEffect(() => {
     if (showLeaderboard) {
       setLeaderboardLoading(true);
-      DB.getLeaderboard().then(data => {
-          setLeaderboardData(data);
-          setLeaderboardLoading(false);
-      });
+      
+      // OPTIMIZATION: Force sync current score before fetching leaderboard
+      // This ensures "My Rank" is accurate immediately in the list
+      if (currentUser) {
+          DB.updateUserProgress(currentUser.username, {
+              score,
+              energy,
+              lastRewardTime,
+              ownedSkins,
+              currentSkin: currentSkinId
+          }).then(() => {
+             // Fetch after sync completes
+             DB.getLeaderboard().then(data => {
+                setLeaderboardData(data);
+                setLeaderboardLoading(false);
+             });
+          });
+      } else {
+         DB.getLeaderboard().then(data => {
+            setLeaderboardData(data);
+            setLeaderboardLoading(false);
+         });
+      }
     }
   }, [showLeaderboard]);
 
@@ -239,7 +281,7 @@ export default function App() {
   const handleTap = (e: React.PointerEvent<HTMLDivElement>) => {
     if (energy < ENERGY_COST_PER_CLICK) return;
 
-    const points = 1 * multiplier;
+    const points = skinClickValue * multiplier; // Uses skin base value
     setScore((prev) => prev + points);
     setEnergy((prev) => Math.max(0, prev - ENERGY_COST_PER_CLICK));
     
@@ -367,6 +409,45 @@ export default function App() {
     const bonusText: FloatingText = { id, x: centerX, y: centerY, value: rewardAmount, type: 'score' };
     setFloatingTexts(prev => [...prev, bonusText]);
     setTimeout(() => setFloatingTexts(prev => prev.filter(t => t.id !== id)), 1500);
+  };
+
+  // --- SHOP LOGIC ---
+  const handleBuySkin = (skin: SkinConfig) => {
+      if (score >= skin.cost) {
+          const newScore = score - skin.cost;
+          const newOwnedSkins = [...ownedSkins, skin.id];
+          
+          setScore(newScore);
+          setOwnedSkins(newOwnedSkins);
+          // Auto equip
+          setCurrentSkinId(skin.id);
+
+          // Force immediate sync to save purchase
+          if (currentUser) {
+            DB.updateUserProgress(currentUser.username, {
+                score: newScore,
+                energy,
+                lastRewardTime,
+                ownedSkins: newOwnedSkins,
+                currentSkin: skin.id
+            });
+          }
+      }
+  };
+
+  const handleEquipSkin = (id: number) => {
+      setCurrentSkinId(id);
+      
+      // Force immediate sync to save selection
+      if (currentUser) {
+        DB.updateUserProgress(currentUser.username, {
+            score,
+            energy,
+            lastRewardTime,
+            ownedSkins,
+            currentSkin: id
+        });
+      }
   };
 
   if (isLoading) {
@@ -503,7 +584,12 @@ export default function App() {
 
           {/* Interaction Area */}
           <div className="relative w-full max-w-[320px] aspect-square mb-8">
-             <ClickButton onClick={handleTap} disabled={energy < ENERGY_COST_PER_CLICK} multiplier={multiplier} />
+             <ClickButton 
+                onClick={handleTap} 
+                disabled={energy < ENERGY_COST_PER_CLICK} 
+                multiplier={multiplier} 
+                skin={activeSkin}
+             />
           </div>
 
           {floatingTexts.map((text) => (
@@ -521,7 +607,26 @@ export default function App() {
           ))}
 
           {/* Energy Bar */}
-          <EnergyBar current={energy} />
+          <div className="w-full max-w-md px-6 mb-8 select-none">
+            <div className="flex justify-between items-end mb-2">
+                <div className="flex items-center gap-2 text-cyan-300">
+                    <span className="font-bold text-lg tracking-wider">Energy</span>
+                </div>
+                <span className="text-sm font-mono text-slate-400">
+                    {Math.floor(energy)} <span className="text-slate-600">/</span> {maxEnergy}
+                </span>
+            </div>
+            
+            <div className="h-4 bg-slate-800/50 rounded-full overflow-hidden backdrop-blur-sm border border-slate-700/50 shadow-inner">
+                <div 
+                    className={`h-full ${activeSkin.colors.gradientFrom.replace('from-', 'bg-')} transition-all duration-300 ease-out shadow-[0_0_15px_rgba(6,182,212,0.5)]`}
+                    style={{ width: `${Math.min((energy / maxEnergy) * 100, 100)}%` }}
+                />
+            </div>
+            <div className="mt-1 text-center">
+                <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Restores 1 every {activeSkin.regenRateSec}s</span>
+            </div>
+          </div>
 
        </div>
 
@@ -545,6 +650,15 @@ export default function App() {
        {/* Footer / Controls */}
        <div className="relative z-20 w-full px-6 py-6 pb-8 bg-gradient-to-t from-black via-black/90 to-transparent flex items-center justify-between gap-4 max-w-md mx-auto">
           
+          {/* Shop Button */}
+          <button 
+             onClick={() => setShowShop(true)}
+             className="flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-2xl bg-gradient-to-br from-pink-600/20 to-purple-600/20 border border-pink-500/30 text-pink-200 hover:bg-pink-600/30 hover:border-pink-400 shadow-[0_0_15px_rgba(236,72,153,0.2)] transition-all"
+          >
+             <ShoppingBag className="w-6 h-6 text-pink-400" />
+             <span className="text-xs font-bold uppercase tracking-wider">Skins</span>
+          </button>
+
           {/* Hourly Reward Button */}
           <button 
              onClick={handleClaimReward}
@@ -559,7 +673,7 @@ export default function App() {
           >
              <Gift className={`w-6 h-6 ${!timeRemaining ? 'animate-bounce' : ''}`} />
              <span className="text-xs font-bold uppercase tracking-wider">
-               {timeRemaining || "Claim Gift"}
+               {timeRemaining || "Claim"}
              </span>
           </button>
 
@@ -569,9 +683,82 @@ export default function App() {
              className="flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 text-slate-300 hover:bg-slate-800 transition-all hover:border-slate-500 shadow-lg"
           >
              <Trophy className="w-6 h-6 text-yellow-500" />
-             <span className="text-xs font-bold uppercase tracking-wider">Rankings</span>
+             <span className="text-xs font-bold uppercase tracking-wider">Rank</span>
           </button>
        </div>
+
+       {/* SHOP MODAL */}
+       {showShop && (
+         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in-up">
+            <div className="w-full max-w-md h-[85vh] sm:h-[650px] bg-slate-900 border border-slate-700 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+                <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-pink-500/10 rounded-lg">
+                            <ShoppingBag className="w-6 h-6 text-pink-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-white">Skin Shop</h2>
+                            <p className="text-xs text-slate-400">Upgrade your cosmic plate</p>
+                        </div>
+                    </div>
+                    <button onClick={() => setShowShop(false)} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
+                </div>
+                
+                <div className="p-4 bg-slate-900/80 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
+                     <span className="text-slate-400 text-sm">Your Balance</span>
+                     <span className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">{score.toLocaleString()}</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {SKINS.map((skin) => {
+                        const isOwned = ownedSkins.includes(skin.id);
+                        const isEquipped = currentSkinId === skin.id;
+                        const canAfford = score >= skin.cost;
+
+                        return (
+                            <div key={skin.id} className={`relative p-4 rounded-2xl border ${isEquipped ? 'border-green-500/50 bg-green-900/10' : 'border-slate-700 bg-slate-800/30'} flex flex-col gap-3 transition-all`}>
+                                <div className="flex justify-between items-start">
+                                    <div className="flex gap-3">
+                                        <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${skin.colors.gradientFrom} ${skin.colors.gradientTo} shadow-lg`}></div>
+                                        <div>
+                                            <h3 className="font-bold text-white">{skin.name}</h3>
+                                            <div className="flex gap-2 text-xs mt-1">
+                                                <span className="bg-slate-800 px-2 py-0.5 rounded text-cyan-300">x{skin.clickMultiplier} Click</span>
+                                                <span className="bg-slate-800 px-2 py-0.5 rounded text-orange-300">{skin.maxEnergy} Energy</span>
+                                            </div>
+                                             <div className="text-xs text-slate-500 mt-1">Regen: {skin.regenRateSec}s</div>
+                                        </div>
+                                    </div>
+                                    {isEquipped && <div className="bg-green-500/20 text-green-400 p-1 rounded-full"><Check className="w-4 h-4" /></div>}
+                                </div>
+
+                                <div className="mt-2">
+                                    {isOwned ? (
+                                        <button 
+                                            onClick={() => handleEquipSkin(skin.id)}
+                                            disabled={isEquipped}
+                                            className={`w-full py-2 rounded-xl font-bold text-sm transition-all ${isEquipped ? 'bg-slate-700/50 text-slate-400 cursor-default' : 'bg-white text-black hover:bg-slate-200'}`}
+                                        >
+                                            {isEquipped ? 'Equipped' : 'Equip'}
+                                        </button>
+                                    ) : (
+                                        <button 
+                                            onClick={() => handleBuySkin(skin)}
+                                            disabled={!canAfford}
+                                            className={`w-full py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${canAfford ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
+                                        >
+                                            {!canAfford && <Lock className="w-3 h-3" />}
+                                            Buy for {skin.cost.toLocaleString()}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+         </div>
+       )}
 
        {/* LEADERBOARD MODAL */}
        {showLeaderboard && (
