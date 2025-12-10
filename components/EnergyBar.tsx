@@ -33,7 +33,7 @@ export const EnergyBar: React.FC<EnergyBarProps> = ({ current }) => {
         />
       </div>
       <div className="mt-1 text-center">
-        <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Restores 1 every 5s</span>
+        <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em]">Restores 1 every 3s</span>
       </div>
     </div>
   );

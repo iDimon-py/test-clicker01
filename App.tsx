@@ -156,8 +156,11 @@ export default function App() {
     if (!currentUser) return;
 
     const scheduleNextBonus = () => {
-        // Random time between 30 and 120 seconds
-        const delay = Math.random() * (120000 - 30000) + 30000;
+        // Random time between 20 and 100 seconds
+        const minDelay = 20000;
+        const maxDelay = 100000;
+        const delay = Math.random() * (maxDelay - minDelay) + minDelay;
+        
         return setTimeout(() => {
             spawnBonus();
             // Schedule the next one recursively
