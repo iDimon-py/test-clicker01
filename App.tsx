@@ -5,15 +5,53 @@ import { MAX_ENERGY, ENERGY_REGEN_RATE_MS, ENERGY_REGEN_AMOUNT, ENERGY_COST_PER_
 import { FloatingText } from './types';
 import { Trophy, RefreshCw } from 'lucide-react';
 
+const STORAGE_KEY = 'cosmic_clicker_save_v1';
+
 export default function App() {
-  const [score, setScore] = useState<number>(0);
-  const [energy, setEnergy] = useState<number>(MAX_ENERGY);
+  // Initialize state from LocalStorage to prevent flash of 0 and enable offline regen
+  const [score, setScore] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved).score : 0;
+    } catch (e) {
+      return 0;
+    }
+  });
+
+  const [energy, setEnergy] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return MAX_ENERGY;
+      
+      const parsed = JSON.parse(saved);
+      const lastUpdated = parsed.lastUpdated || Date.now();
+      const now = Date.now();
+      
+      // Calculate how much energy was restored while offline
+      const timeDiff = now - lastUpdated;
+      const cycles = Math.floor(timeDiff / ENERGY_REGEN_RATE_MS);
+      const offlineRegen = cycles * ENERGY_REGEN_AMOUNT;
+      
+      return Math.min(MAX_ENERGY, (parsed.energy || 0) + offlineRegen);
+    } catch (e) {
+      return MAX_ENERGY;
+    }
+  });
+
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
-  
-  // Ref to manage text IDs
   const textIdRef = useRef(0);
 
-  // Energy Regeneration Logic
+  // Persistence Effect: Save data whenever score or energy changes
+  useEffect(() => {
+    const stateToSave = {
+      score,
+      energy,
+      lastUpdated: Date.now()
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
+  }, [score, energy]);
+
+  // Active Energy Regeneration Logic (while app is open)
   useEffect(() => {
     const timer = setInterval(() => {
       setEnergy((prevEnergy) => {
@@ -28,7 +66,6 @@ export default function App() {
   // Handle Click Logic
   const handleTap = (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
     if (energy < ENERGY_COST_PER_CLICK) {
-      // Logic for not enough energy - shake effect could be added here
       return;
     }
 
@@ -39,11 +76,9 @@ export default function App() {
     // Calculate click position for floating text
     let clientX, clientY;
     if ('touches' in e) {
-      // Touch event
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
     } else {
-      // Mouse event
       clientX = (e as React.MouseEvent).clientX;
       clientY = (e as React.MouseEvent).clientY;
     }
@@ -69,6 +104,7 @@ export default function App() {
       setScore(0);
       setEnergy(MAX_ENERGY);
       setFloatingTexts([]);
+      localStorage.removeItem(STORAGE_KEY);
     }
   };
 
