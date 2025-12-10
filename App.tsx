@@ -12,7 +12,7 @@ import {
 } from './constants';
 import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, Zap } from 'lucide-react';
+import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
@@ -34,7 +34,12 @@ export default function App() {
 
   // UI State
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
-  const [particles, setParticles] = useState<Particle[]>([]);
+  
+  // OPTIMIZATION: Use Ref for particles instead of State to avoid React Re-renders
+  const particlesRef = useRef<Particle[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const particleIdRef = useRef(0);
+
   const [timeRemaining, setTimeRemaining] = useState<string>("");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboardData, setLeaderboardData] = useState<UserData[]>([]);
@@ -42,7 +47,6 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   
   const textIdRef = useRef(0);
-  const particleIdRef = useRef(0);
 
   // Initial Auto-Login Check
   useEffect(() => {
@@ -229,21 +233,16 @@ export default function App() {
   }, [showLeaderboard]);
 
   // --- CLICK INTERACTION ---
-  const handleTap = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+  const handleTap = (e: React.PointerEvent<HTMLDivElement>) => {
     if (energy < ENERGY_COST_PER_CLICK) return;
 
     const points = 1 * multiplier;
     setScore((prev) => prev + points);
     setEnergy((prev) => Math.max(0, prev - ENERGY_COST_PER_CLICK));
     
-    let clientX, clientY;
-    if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = (e as React.MouseEvent).clientX;
-      clientY = (e as React.MouseEvent).clientY;
-    }
+    // PointerEvent has clientX/Y
+    const clientX = e.clientX;
+    const clientY = e.clientY;
 
     spawnFloatingText(clientX, clientY, points);
     spawnCoinParticles(clientX, clientY);
@@ -265,50 +264,90 @@ export default function App() {
   };
 
   const spawnCoinParticles = (x: number, y: number) => {
-    const newParticles: Particle[] = [];
-    const count = multiplier > 1 ? 5 : 1; // More coins if multiplier active
+    const count = multiplier > 1 ? 3 : 1; // Reduced from 5 to 3 for better performance
 
     for (let i = 0; i < count; i++) {
-        // Random angle between -90 (up) spread by 60 deg
-        // Or full explosion? Let's do upward cone spread
-        const angle = (Math.random() * 90 - 135) * (Math.PI / 180); // Up-Left to Up-Right mostly
-        const velocity = Math.random() * 5 + 3;
+        const angle = (Math.random() * 120 - 150) * (Math.PI / 180); // Spread upward
+        const velocity = Math.random() * 8 + 4;
         
-        newParticles.push({
+        particlesRef.current.push({
             id: particleIdRef.current++,
             x,
             y,
             angle,
             velocity,
-            life: 1
+            life: 1.0
         });
     }
-
-    setParticles(prev => [...prev, ...newParticles]);
   };
 
-  // Particle Animation Loop
+  // --- CANVAS PARTICLE LOOP (High Performance) ---
   useEffect(() => {
-      if (particles.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-      let animationFrameId: number;
+    // Resize canvas to fullscreen
+    const resizeCanvas = () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
 
-      const animate = () => {
-          setParticles(prev => {
-              const updated = prev.map(p => ({
-                  ...p,
-                  x: p.x + Math.cos(p.angle) * p.velocity,
-                  y: p.y + Math.sin(p.angle) * p.velocity + 1.5, // +1.5 simulates Gravity
-                  life: p.life - 0.02
-              })).filter(p => p.life > 0);
-              return updated;
-          });
-          animationFrameId = requestAnimationFrame(animate);
-      };
+    let animationFrameId: number;
 
-      animationFrameId = requestAnimationFrame(animate);
-      return () => cancelAnimationFrame(animationFrameId);
-  }, [particles.length > 0]);
+    const render = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Update and draw particles
+        const particles = particlesRef.current;
+        
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            
+            // Move
+            p.x += Math.cos(p.angle) * p.velocity;
+            p.y += Math.sin(p.angle) * p.velocity + 1.2; // Gravity
+            p.life -= 0.02;
+
+            if (p.life <= 0) {
+                particles.splice(i, 1);
+            } else {
+                // Draw Coin
+                ctx.globalAlpha = p.life;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+                
+                // Gold Gradient
+                const gradient = ctx.createRadialGradient(p.x - 2, p.y - 2, 0, p.x, p.y, 10);
+                gradient.addColorStop(0, '#fcd34d'); // lighter yellow
+                gradient.addColorStop(1, '#b45309'); // darker gold
+                
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                
+                // Shine
+                ctx.beginPath();
+                ctx.arc(p.x - 3, p.y - 3, 3, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.fill();
+                
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        animationFrameId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+        window.removeEventListener('resize', resizeCanvas);
+        cancelAnimationFrame(animationFrameId);
+    };
+  }, []); // Run once on mount
 
 
   const handleClaimReward = () => {
@@ -406,6 +445,12 @@ export default function App() {
        {/* Ambient Background */}
        <div className={`absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] transition-opacity duration-1000 ${multiplier > 1 ? 'opacity-60' : 'opacity-40'}`}></div>
        <div className={`absolute top-0 left-0 w-full h-full bg-gradient-to-b transition-colors duration-1000 z-0 pointer-events-none ${multiplier > 1 ? 'from-amber-900/40 via-black to-black' : 'from-slate-900 via-slate-900/50 to-black'}`}></div>
+       
+       {/* Canvas Layer for Particles - High Performance */}
+       <canvas 
+          ref={canvasRef}
+          className="absolute inset-0 z-30 pointer-events-none"
+       />
 
        {/* Navbar / Header */}
        <div className="relative z-10 w-full px-6 py-4 flex justify-between items-center backdrop-blur-sm bg-slate-900/30 border-b border-white/5">
@@ -457,20 +502,6 @@ export default function App() {
           <div className="relative w-full max-w-[320px] aspect-square mb-8">
              <ClickButton onClick={handleTap} disabled={energy < ENERGY_COST_PER_CLICK} multiplier={multiplier} />
           </div>
-
-          {/* Global Particles Layer (Absolute to body/container, but here relative to screen center area logic is handled by fixed positioning in map) */}
-          {particles.map(p => (
-              <div 
-                key={p.id}
-                className="coin-particle"
-                style={{
-                    left: p.x,
-                    top: p.y,
-                    opacity: p.life,
-                    transform: `scale(${p.life})`
-                }}
-              />
-          ))}
 
           {floatingTexts.map((text) => (
              <div

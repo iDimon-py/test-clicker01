@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 interface ClickButtonProps {
-  onClick: (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => void;
+  onClick: (e: React.PointerEvent<HTMLDivElement>) => void;
   disabled: boolean;
   multiplier: number;
 }
@@ -22,8 +22,11 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
     }
   }, [transformStyle]);
 
-  const handleInteraction = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+  const handleInteraction = (e: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
+    
+    // Critical fix for mobile: prevent default browser actions (scrolling/zooming/emulated mouse clicks)
+    e.preventDefault();
 
     // Call the parent click handler immediately
     onClick(e);
@@ -31,15 +34,10 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
 
     if (buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
-      let clientX, clientY;
-
-      if ('touches' in e) {
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
-      } else {
-        clientX = (e as React.MouseEvent).clientX;
-        clientY = (e as React.MouseEvent).clientY;
-      }
+      
+      // PointerEvent unifies mouse and touch coordinates
+      const clientX = e.clientX;
+      const clientY = e.clientY;
 
       // Calculate distance from center
       const centerX = rect.left + rect.width / 2;
@@ -49,14 +47,8 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
       const offsetY = clientY - centerY;
 
       // Calculate rotation (Cymbal effect)
-      // Max rotation degrees
       const maxRot = 20; 
       
-      // If we click RIGHT, we want the Right side to go DOWN (Rotate Y positive? No, Rotate Y makes it spin around Y axis)
-      // CSS rotateY: positive value moves right side AWAY (into screen).
-      // CSS rotateX: positive value moves top side AWAY (into screen) -> bottom comes OUT.
-      
-      // Logic: Click Top -> Top goes in (RotateX > 0). Click Bottom -> Bottom goes in (RotateX < 0)
       const rotateX = -(offsetY / (rect.height / 2)) * maxRot; 
       const rotateY = (offsetX / (rect.width / 2)) * maxRot;
 
@@ -82,14 +74,13 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
           transform: transformStyle || 'perspective(800px) rotateX(0deg) rotateY(0deg) scale(1)',
           transition: 'transform 0.1s cubic-bezier(0.1, 0.7, 1.0, 0.1)' // Snappy spring
         }}
-        onMouseDown={handleInteraction}
-        onTouchStart={handleInteraction}
+        onPointerDown={handleInteraction}
       >
         {/* Outer Ring / Rim */}
         <div className={`
             absolute inset-0 rounded-full border-4 
             ${multiplier > 1 ? 'border-yellow-500/80' : 'border-slate-800/80'} 
-            bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden z-10 transition-colors duration-300
+            bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden z-10 transition-colors duration-300 pointer-events-none
         `}>
              {/* Inner Gradient - Planet Core */}
             <div className={`
@@ -115,7 +106,7 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, mul
 
         {/* Pulse Ring Animation */}
         {!disabled && (
-           <div className={`absolute -inset-4 rounded-full border-2 ${multiplier > 1 ? 'border-yellow-400/50' : 'border-cyan-500/30'} animate-pulse-glow z-0`}></div>
+           <div className={`absolute -inset-4 rounded-full border-2 ${multiplier > 1 ? 'border-yellow-400/50' : 'border-cyan-500/30'} animate-pulse-glow z-0 pointer-events-none`}></div>
         )}
       </div>
     </div>
