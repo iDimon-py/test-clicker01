@@ -1,58 +1,98 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ClickButton } from './components/ClickButton';
 import { EnergyBar } from './components/EnergyBar';
-import { MAX_ENERGY, ENERGY_REGEN_RATE_MS, ENERGY_REGEN_AMOUNT, ENERGY_COST_PER_CLICK } from './constants';
-import { FloatingText } from './types';
-import { Trophy, RefreshCw } from 'lucide-react';
-
-const STORAGE_KEY = 'cosmic_clicker_save_v1';
+import { 
+  MAX_ENERGY, 
+  ENERGY_REGEN_RATE_MS, 
+  ENERGY_REGEN_AMOUNT, 
+  ENERGY_COST_PER_CLICK,
+  REWARD_COOLDOWN_MS,
+  REWARD_MIN,
+  REWARD_MAX
+} from './constants';
+import { FloatingText, UserData } from './types';
+import * as DB from './db';
+import { Trophy, Gift, Clock, Users, X, LogIn, Gamepad2 } from 'lucide-react';
 
 export default function App() {
-  // Initialize state from LocalStorage to prevent flash of 0 and enable offline regen
-  const [score, setScore] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved).score : 0;
-    } catch (e) {
-      return 0;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState<UserData | null>(null);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Game State
+  const [score, setScore] = useState<number>(0);
+  const [energy, setEnergy] = useState<number>(MAX_ENERGY);
+  const [lastRewardTime, setLastRewardTime] = useState<number>(0);
+  
+  // UI State
+  const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
+  const [timeRemaining, setTimeRemaining] = useState<string>("");
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [leaderboardData, setLeaderboardData] = useState<UserData[]>([]);
+  
+  const textIdRef = useRef(0);
 
-  const [energy, setEnergy] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return MAX_ENERGY;
+  // Initial Auto-Login Check
+  useEffect(() => {
+    const savedUser = DB.getSessionUser();
+    if (savedUser) {
+      setCurrentUser(savedUser);
+      setScore(savedUser.score);
+      setLastRewardTime(savedUser.lastRewardTime);
       
-      const parsed = JSON.parse(saved);
-      const lastUpdated = parsed.lastUpdated || Date.now();
+      // Calculate offline energy
       const now = Date.now();
-      
-      // Calculate how much energy was restored while offline
+      const lastUpdated = savedUser.lastUpdated || now;
       const timeDiff = now - lastUpdated;
       const cycles = Math.floor(timeDiff / ENERGY_REGEN_RATE_MS);
       const offlineRegen = cycles * ENERGY_REGEN_AMOUNT;
       
-      return Math.min(MAX_ENERGY, (parsed.energy || 0) + offlineRegen);
-    } catch (e) {
-      return MAX_ENERGY;
+      setEnergy(Math.min(MAX_ENERGY, savedUser.energy + offlineRegen));
     }
-  });
+    setIsLoading(false);
+  }, []);
 
-  const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
-  const textIdRef = useRef(0);
+  // Login Handler
+  const handleLogin = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!usernameInput.trim()) return;
 
-  // Persistence Effect: Save data whenever score or energy changes
+    const user = DB.loginUser(usernameInput.trim());
+    setCurrentUser(user);
+    
+    setScore(user.score);
+    setLastRewardTime(user.lastRewardTime);
+
+    const now = Date.now();
+    const lastUpdated = user.lastUpdated || now;
+    const timeDiff = now - lastUpdated;
+    const cycles = Math.floor(timeDiff / ENERGY_REGEN_RATE_MS);
+    const offlineRegen = cycles * ENERGY_REGEN_AMOUNT;
+    
+    setEnergy(Math.min(MAX_ENERGY, user.energy + offlineRegen));
+  };
+
+  const handleLogout = () => {
+    DB.logoutUser();
+    setCurrentUser(null);
+    setShowLeaderboard(false);
+    setUsernameInput('');
+  };
+
+  // Sync with DB
   useEffect(() => {
-    const stateToSave = {
+    if (!currentUser) return;
+    DB.updateUserProgress(currentUser.username, {
       score,
       energy,
-      lastUpdated: Date.now()
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
-  }, [score, energy]);
+      lastRewardTime
+    });
+  }, [score, energy, lastRewardTime, currentUser]);
 
-  // Active Energy Regeneration Logic (while app is open)
+  // Energy Regen Loop
   useEffect(() => {
+    if (!currentUser) return;
+
     const timer = setInterval(() => {
       setEnergy((prevEnergy) => {
         if (prevEnergy >= MAX_ENERGY) return MAX_ENERGY;
@@ -61,53 +101,138 @@ export default function App() {
     }, ENERGY_REGEN_RATE_MS);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [currentUser]);
 
-  // Handle Click Logic
-  const handleTap = (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
-    if (energy < ENERGY_COST_PER_CLICK) {
-      return;
+  // Reward Timer Loop
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const diff = now - lastRewardTime;
+      
+      if (diff >= REWARD_COOLDOWN_MS) {
+        setTimeRemaining("");
+      } else {
+        const remaining = REWARD_COOLDOWN_MS - diff;
+        const minutes = Math.floor((remaining / 1000 / 60) % 60);
+        const seconds = Math.floor((remaining / 1000) % 60);
+        setTimeRemaining(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+      }
+    };
+
+    updateTimer();
+    const timer = setInterval(updateTimer, 1000);
+    return () => clearInterval(timer);
+  }, [lastRewardTime, currentUser]);
+
+  // Leaderboard data fetch
+  useEffect(() => {
+    if (showLeaderboard) {
+      setLeaderboardData(DB.getLeaderboard());
     }
+  }, [showLeaderboard, score]);
 
-    // Update state
+  // Click Interaction
+  const handleTap = (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
+    if (energy < ENERGY_COST_PER_CLICK) return;
+
     setScore((prev) => prev + 1);
     setEnergy((prev) => Math.max(0, prev - ENERGY_COST_PER_CLICK));
+    spawnFloatingText(e, 1);
+  };
 
-    // Calculate click position for floating text
+  const spawnFloatingText = (e: React.MouseEvent | React.TouchEvent | {clientX: number, clientY: number}, value: number) => {
     let clientX, clientY;
     if ('touches' in e) {
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
+    } else if ('clientX' in e) {
+      clientX = (e as any).clientX;
+      clientY = (e as any).clientY;
     } else {
-      clientX = (e as React.MouseEvent).clientX;
-      clientY = (e as React.MouseEvent).clientY;
+      clientX = window.innerWidth / 2;
+      clientY = window.innerHeight / 2;
     }
 
-    // Add floating text
     const newText: FloatingText = {
       id: textIdRef.current++,
       x: clientX,
       y: clientY,
-      value: 1
+      value: value
     };
     
     setFloatingTexts((prev) => [...prev, newText]);
-
-    // Clean up floating text after animation
     setTimeout(() => {
       setFloatingTexts((prev) => prev.filter((t) => t.id !== newText.id));
     }, 1000);
   };
 
-  const handleReset = () => {
-    if (window.confirm("Are you sure you want to reset your progress?")) {
-      setScore(0);
-      setEnergy(MAX_ENERGY);
-      setFloatingTexts([]);
-      localStorage.removeItem(STORAGE_KEY);
-    }
+  const handleClaimReward = () => {
+    const now = Date.now();
+    if (now - lastRewardTime < REWARD_COOLDOWN_MS) return;
+
+    const rewardAmount = Math.floor(Math.random() * (REWARD_MAX - REWARD_MIN + 1)) + REWARD_MIN;
+    setScore(prev => prev + rewardAmount);
+    setLastRewardTime(now);
+
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    const id = textIdRef.current++;
+    const bonusText: FloatingText = { id, x: centerX, y: centerY, value: rewardAmount };
+    setFloatingTexts(prev => [...prev, bonusText]);
+    setTimeout(() => setFloatingTexts(prev => prev.filter(t => t.id !== id)), 1500);
   };
 
+  if (isLoading) {
+    return <div className="min-h-screen w-full bg-black flex items-center justify-center text-white">Loading...</div>;
+  }
+
+  // --- LOGIN SCREEN ---
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen w-full bg-black text-white flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+         <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-30 animate-pulse-glow"></div>
+         <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[140%] bg-gradient-to-b from-purple-900/40 via-blue-900/20 to-black pointer-events-none" />
+         
+         <div className="z-10 w-full max-w-sm bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 transform transition-all animate-fade-in-up">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.6)] mb-2">
+              <Gamepad2 className="w-10 h-10 text-white" />
+            </div>
+            
+            <div className="text-center">
+              <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-blue-500">
+                Cosmic Clicker
+              </h1>
+              <p className="text-slate-400 mt-2 text-sm">Enter the galaxy to compete</p>
+            </div>
+
+            <form onSubmit={handleLogin} className="w-full space-y-4">
+              <div className="space-y-2">
+                <input 
+                  type="text" 
+                  placeholder="Enter Username"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  className="w-full bg-slate-800/50 border border-slate-600 rounded-xl px-4 py-3 text-center text-lg font-bold placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all text-white"
+                  autoFocus
+                />
+              </div>
+              <button 
+                type="submit"
+                disabled={!usernameInput.trim()}
+                className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-900/40 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <LogIn className="w-5 h-5" />
+                Start Journey
+              </button>
+            </form>
+         </div>
+      </div>
+    );
+  }
+
+  // --- GAME SCREEN ---
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-900 via-slate-950 to-black text-white flex flex-col relative overflow-hidden font-sans">
       
@@ -121,8 +246,11 @@ export default function App() {
           <Trophy className="w-4 h-4 text-yellow-500" />
           <span className="text-sm font-semibold tracking-widest uppercase text-slate-400">Total Score</span>
         </div>
-        <div className="text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400 drop-shadow-lg">
+        <div className="text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400 drop-shadow-lg animate-in zoom-in duration-300">
           {score.toLocaleString()}
+        </div>
+        <div className="mt-2 text-xs font-mono text-slate-500">
+          Player: <span className="text-cyan-400">{currentUser.username}</span>
         </div>
       </header>
 
@@ -130,37 +258,134 @@ export default function App() {
       <main className="flex-1 flex flex-col items-center justify-center relative z-10 w-full">
         <ClickButton onClick={handleTap} disabled={energy < ENERGY_COST_PER_CLICK} />
         
-        {/* Floating Text Container (Overlay) */}
+        {/* Floating Text */}
         {floatingTexts.map((text) => (
           <div
             key={text.id}
-            className="absolute pointer-events-none animate-float-up font-bold text-4xl text-white drop-shadow-[0_0_10px_rgba(59,130,246,0.8)] z-50"
+            className={`absolute pointer-events-none animate-float-up font-bold text-4xl drop-shadow-[0_0_10px_rgba(59,130,246,0.8)] z-50 whitespace-nowrap`}
             style={{ 
               left: text.x, 
               top: text.y,
-              marginLeft: '-15px', // Center horizonally relative to click
-              marginTop: '-40px'   // Offset slightly up
+              marginLeft: '-20px', 
+              marginTop: '-40px',
+              color: text.value > 10 ? '#fde047' : 'white',
+              fontSize: text.value > 10 ? '3rem' : '2.25rem'
             }}
           >
-            +{text.value}
+            +{text.value} {text.value > 10 ? '🎁' : ''}
           </div>
         ))}
       </main>
 
       {/* Footer / Controls */}
-      <footer className="flex-none w-full flex flex-col items-center pb-8 z-10">
+      <footer className="flex-none w-full flex flex-col items-center pb-8 z-10 px-4">
         <EnergyBar current={energy} />
         
-        <button 
-          onClick={handleReset}
-          className="group flex items-center gap-2 px-6 py-3 rounded-xl bg-slate-900/50 border border-slate-800 hover:bg-red-900/20 hover:border-red-900/50 transition-all duration-300 backdrop-blur-md"
-        >
-          <RefreshCw className="w-4 h-4 text-slate-500 group-hover:text-red-400 transition-colors group-hover:rotate-180 duration-500" />
-          <span className="text-xs font-medium text-slate-500 group-hover:text-red-400 uppercase tracking-widest">
-            Reset Progress
-          </span>
-        </button>
+        <div className="flex items-center gap-3 w-full justify-center max-w-md">
+          {/* Hourly Reward */}
+          <button 
+            onClick={handleClaimReward}
+            disabled={!!timeRemaining}
+            className={`
+              flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border backdrop-blur-md transition-all duration-300
+              ${timeRemaining 
+                ? 'bg-slate-900/50 border-slate-800 opacity-70 cursor-not-allowed' 
+                : 'bg-gradient-to-r from-yellow-600/20 to-orange-600/20 border-yellow-500/30 hover:bg-yellow-600/30 hover:border-yellow-500/50 cursor-pointer shadow-[0_0_15px_rgba(234,179,8,0.2)]'
+              }
+            `}
+          >
+            {timeRemaining ? (
+              <>
+                <Clock className="w-5 h-5 text-slate-400" />
+                <span className="text-sm font-mono font-bold text-slate-400">{timeRemaining}</span>
+              </>
+            ) : (
+              <>
+                <Gift className="w-5 h-5 text-yellow-400 animate-pulse" />
+                <span className="text-sm font-bold text-yellow-100 uppercase tracking-wide">Bonus</span>
+              </>
+            )}
+          </button>
+
+          {/* Leaderboard */}
+          <button 
+            onClick={() => setShowLeaderboard(true)}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-900/50 border border-slate-800 hover:bg-blue-900/20 hover:border-blue-500/30 transition-all duration-300 backdrop-blur-md cursor-pointer"
+          >
+            <Users className="w-5 h-5 text-blue-400" />
+            <span className="text-sm font-bold text-blue-100 uppercase tracking-wide">Top</span>
+          </button>
+        </div>
       </footer>
+
+      {/* Leaderboard Modal */}
+      {showLeaderboard && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-slate-900/95 border border-slate-700 rounded-3xl p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[80vh]">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 blur-[50px] pointer-events-none" />
+                <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/10 blur-[50px] pointer-events-none" />
+
+                <div className="flex justify-between items-center mb-6 relative z-10 flex-none">
+                    <h2 className="text-2xl font-bold flex items-center gap-2 text-white">
+                        <Trophy className="w-6 h-6 text-yellow-500" />
+                        Leaderboard
+                    </h2>
+                    <button 
+                        onClick={() => setShowLeaderboard(false)}
+                        className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors"
+                    >
+                        <X className="w-5 h-5 text-slate-400" />
+                    </button>
+                </div>
+
+                <div className="space-y-3 relative z-10 overflow-y-auto pr-2 custom-scrollbar">
+                    {leaderboardData.length === 0 && (
+                        <div className="text-center text-slate-500 py-4">No players yet.</div>
+                    )}
+                    {leaderboardData.map((user, index) => {
+                        const isMe = user.username === currentUser.username;
+                        return (
+                          <div 
+                              key={user.username} 
+                              className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                                  isMe
+                                  ? 'bg-blue-600/20 border-blue-500/50 scale-[1.01] shadow-[0_0_15px_rgba(59,130,246,0.2)] sticky top-0 z-20 backdrop-blur-md' 
+                                  : 'bg-slate-800/50 border-slate-700/50'
+                              }`}
+                          >
+                              <div className="flex items-center gap-3">
+                                  <span className={`text-lg font-bold w-6 flex justify-center ${
+                                      index === 0 ? 'text-yellow-400' : 
+                                      index === 1 ? 'text-slate-300' : 
+                                      index === 2 ? 'text-amber-600' : 'text-slate-500'
+                                  }`}>
+                                      {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
+                                  </span>
+                                  <div className="flex flex-col">
+                                      <span className={`font-semibold truncate max-w-[120px] ${isMe ? 'text-blue-200' : 'text-slate-200'}`}>
+                                          {user.username} {isMe && '(You)'}
+                                      </span>
+                                  </div>
+                              </div>
+                              <span className="font-mono font-bold text-slate-300">
+                                  {user.score.toLocaleString()}
+                              </span>
+                          </div>
+                        );
+                    })}
+                </div>
+                
+                <div className="mt-4 pt-4 border-t border-slate-800 text-center flex-none">
+                   <button 
+                     onClick={handleLogout}
+                     className="text-xs text-slate-500 hover:text-white transition-colors"
+                   >
+                     Log Out
+                   </button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 }
