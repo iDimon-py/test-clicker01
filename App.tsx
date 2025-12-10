@@ -143,7 +143,7 @@ export default function App() {
             ownedSkins,
             currentSkin: currentSkinId
         });
-    }, 3000); 
+    }, 10000); // Changed from 3000 to 10000 (10 seconds)
 
     return () => clearInterval(syncInterval);
   }, [currentUser, score, energy, lastRewardTime, ownedSkins, currentSkinId]);
