@@ -10,9 +10,9 @@ import {
   REWARD_MIN,
   REWARD_MAX
 } from './constants';
-import { FloatingText, UserData } from './types';
+import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, Clock, Users, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud } from 'lucide-react';
+import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, Zap } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
@@ -25,9 +25,16 @@ export default function App() {
   const [score, setScore] = useState<number>(0);
   const [energy, setEnergy] = useState<number>(MAX_ENERGY);
   const [lastRewardTime, setLastRewardTime] = useState<number>(0);
+  const [multiplier, setMultiplier] = useState<number>(1);
+  const [multiplierEndTime, setMultiplierEndTime] = useState<number>(0);
   
+  // Bonus State
+  const [showBonus, setShowBonus] = useState(false);
+  const [bonusPosition, setBonusPosition] = useState({ top: '50%', left: '50%' });
+
   // UI State
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
+  const [particles, setParticles] = useState<Particle[]>([]);
   const [timeRemaining, setTimeRemaining] = useState<string>("");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboardData, setLeaderboardData] = useState<UserData[]>([]);
@@ -35,6 +42,7 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   
   const textIdRef = useRef(0);
+  const particleIdRef = useRef(0);
 
   // Initial Auto-Login Check
   useEffect(() => {
@@ -78,7 +86,6 @@ export default function App() {
 
     if (user) {
       if (offline) {
-        // Just show a small toast or log it, don't block
         console.log(error); 
       }
       setupUser(user, offline);
@@ -109,7 +116,7 @@ export default function App() {
             energy,
             lastRewardTime
         });
-    }, 3000); // Save every 3 seconds
+    }, 3000); 
 
     return () => clearInterval(syncInterval);
   }, [currentUser, score, energy, lastRewardTime]);
@@ -127,6 +134,65 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [currentUser]);
+
+  // Multiplier Timer Loop
+  useEffect(() => {
+      if (multiplier <= 1) return;
+      
+      const interval = setInterval(() => {
+          if (Date.now() > multiplierEndTime) {
+              setMultiplier(1);
+          }
+      }, 1000);
+      return () => clearInterval(interval);
+  }, [multiplier, multiplierEndTime]);
+
+  // --- RANDOM BONUS LOGIC ---
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const scheduleNextBonus = () => {
+        // Random time between 30 and 120 seconds
+        const delay = Math.random() * (120000 - 30000) + 30000;
+        return setTimeout(() => {
+            spawnBonus();
+            // Schedule the next one recursively
+            scheduleNextBonus();
+        }, delay);
+    };
+
+    const timerId = scheduleNextBonus();
+    return () => clearTimeout(timerId);
+  }, [currentUser]);
+
+  const spawnBonus = () => {
+      // Random start position
+      const top = Math.random() * 80 + 10; // 10% to 90%
+      const left = Math.random() * 80 + 10; 
+      setBonusPosition({ top: `${top}%`, left: `${left}%` });
+      setShowBonus(true);
+      
+      // Bonus disappears if not clicked after 8 seconds
+      setTimeout(() => setShowBonus(false), 8000);
+  };
+
+  const handleBonusClick = () => {
+      setShowBonus(false);
+      const duration = Math.floor(Math.random() * (15000 - 5000) + 5000); // 5-15s
+      setMultiplier(10);
+      setMultiplierEndTime(Date.now() + duration);
+      
+      // Visual feedback
+      const id = textIdRef.current++;
+      setFloatingTexts(prev => [...prev, {
+          id,
+          x: window.innerWidth / 2,
+          y: window.innerHeight / 2,
+          value: 10,
+          type: 'bonus'
+      }]);
+      setTimeout(() => setFloatingTexts(prev => prev.filter(t => t.id !== id)), 2000);
+  };
 
   // Reward Timer Loop
   useEffect(() => {
@@ -162,33 +228,34 @@ export default function App() {
     }
   }, [showLeaderboard]);
 
-  // Click Interaction
-  const handleTap = (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
+  // --- CLICK INTERACTION ---
+  const handleTap = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
     if (energy < ENERGY_COST_PER_CLICK) return;
 
-    setScore((prev) => prev + 1);
+    const points = 1 * multiplier;
+    setScore((prev) => prev + points);
     setEnergy((prev) => Math.max(0, prev - ENERGY_COST_PER_CLICK));
-    spawnFloatingText(e, 1);
-  };
-
-  const spawnFloatingText = (e: React.MouseEvent | React.TouchEvent | {clientX: number, clientY: number}, value: number) => {
+    
     let clientX, clientY;
     if ('touches' in e) {
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
-    } else if ('clientX' in e) {
-      clientX = (e as any).clientX;
-      clientY = (e as any).clientY;
     } else {
-      clientX = window.innerWidth / 2;
-      clientY = window.innerHeight / 2;
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
     }
 
+    spawnFloatingText(clientX, clientY, points);
+    spawnCoinParticles(clientX, clientY);
+  };
+
+  const spawnFloatingText = (x: number, y: number, value: number) => {
     const newText: FloatingText = {
       id: textIdRef.current++,
-      x: clientX,
-      y: clientY,
-      value: value
+      x,
+      y,
+      value,
+      type: 'score'
     };
     
     setFloatingTexts((prev) => [...prev, newText]);
@@ -196,6 +263,53 @@ export default function App() {
       setFloatingTexts((prev) => prev.filter((t) => t.id !== newText.id));
     }, 1000);
   };
+
+  const spawnCoinParticles = (x: number, y: number) => {
+    const newParticles: Particle[] = [];
+    const count = multiplier > 1 ? 5 : 1; // More coins if multiplier active
+
+    for (let i = 0; i < count; i++) {
+        // Random angle between -90 (up) spread by 60 deg
+        // Or full explosion? Let's do upward cone spread
+        const angle = (Math.random() * 90 - 135) * (Math.PI / 180); // Up-Left to Up-Right mostly
+        const velocity = Math.random() * 5 + 3;
+        
+        newParticles.push({
+            id: particleIdRef.current++,
+            x,
+            y,
+            angle,
+            velocity,
+            life: 1
+        });
+    }
+
+    setParticles(prev => [...prev, ...newParticles]);
+  };
+
+  // Particle Animation Loop
+  useEffect(() => {
+      if (particles.length === 0) return;
+
+      let animationFrameId: number;
+
+      const animate = () => {
+          setParticles(prev => {
+              const updated = prev.map(p => ({
+                  ...p,
+                  x: p.x + Math.cos(p.angle) * p.velocity,
+                  y: p.y + Math.sin(p.angle) * p.velocity + 1.5, // +1.5 simulates Gravity
+                  life: p.life - 0.02
+              })).filter(p => p.life > 0);
+              return updated;
+          });
+          animationFrameId = requestAnimationFrame(animate);
+      };
+
+      animationFrameId = requestAnimationFrame(animate);
+      return () => cancelAnimationFrame(animationFrameId);
+  }, [particles.length > 0]);
+
 
   const handleClaimReward = () => {
     const now = Date.now();
@@ -208,7 +322,7 @@ export default function App() {
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
     const id = textIdRef.current++;
-    const bonusText: FloatingText = { id, x: centerX, y: centerY, value: rewardAmount };
+    const bonusText: FloatingText = { id, x: centerX, y: centerY, value: rewardAmount, type: 'score' };
     setFloatingTexts(prev => [...prev, bonusText]);
     setTimeout(() => setFloatingTexts(prev => prev.filter(t => t.id !== id)), 1500);
   };
@@ -290,8 +404,8 @@ export default function App() {
   return (
     <div className="min-h-screen w-full bg-black text-white relative overflow-hidden font-sans select-none flex flex-col">
        {/* Ambient Background */}
-       <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-40"></div>
-       <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-slate-900 via-slate-900/50 to-black z-0 pointer-events-none"></div>
+       <div className={`absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] transition-opacity duration-1000 ${multiplier > 1 ? 'opacity-60' : 'opacity-40'}`}></div>
+       <div className={`absolute top-0 left-0 w-full h-full bg-gradient-to-b transition-colors duration-1000 z-0 pointer-events-none ${multiplier > 1 ? 'from-amber-900/40 via-black to-black' : 'from-slate-900 via-slate-900/50 to-black'}`}></div>
 
        {/* Navbar / Header */}
        <div className="relative z-10 w-full px-6 py-4 flex justify-between items-center backdrop-blur-sm bg-slate-900/30 border-b border-white/5">
@@ -324,39 +438,75 @@ export default function App() {
           
           {/* Score Display */}
           <div className="flex flex-col items-center mb-8 animate-fade-in-up">
-            <span className="text-slate-400 text-sm uppercase tracking-[0.3em] mb-1">Total Score</span>
+            <span className={`text-sm uppercase tracking-[0.3em] mb-1 ${multiplier > 1 ? 'text-yellow-400 font-bold' : 'text-slate-400'}`}>
+                {multiplier > 1 ? `x${multiplier} BONUS ACTIVE` : 'Total Score'}
+            </span>
             <div className="flex items-center gap-2">
-               <span className="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400 drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+               <span className={`text-5xl sm:text-7xl font-black text-transparent bg-clip-text drop-shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-300 ${multiplier > 1 ? 'bg-gradient-to-b from-yellow-200 to-amber-500 scale-110' : 'bg-gradient-to-b from-white to-slate-400'}`}>
                  {score.toLocaleString()}
                </span>
             </div>
+            {multiplier > 1 && (
+                <div className="text-xs text-yellow-500 font-mono mt-2">
+                    {Math.ceil((multiplierEndTime - Date.now()) / 1000)}s remaining
+                </div>
+            )}
           </div>
 
           {/* Interaction Area */}
           <div className="relative w-full max-w-[320px] aspect-square mb-8">
-             <ClickButton onClick={handleTap} disabled={energy < ENERGY_COST_PER_CLICK} />
-             
-             {/* Floating Numbers */}
-             {floatingTexts.map((text) => (
-               <div
+             <ClickButton onClick={handleTap} disabled={energy < ENERGY_COST_PER_CLICK} multiplier={multiplier} />
+          </div>
+
+          {/* Global Particles Layer (Absolute to body/container, but here relative to screen center area logic is handled by fixed positioning in map) */}
+          {particles.map(p => (
+              <div 
+                key={p.id}
+                className="coin-particle"
+                style={{
+                    left: p.x,
+                    top: p.y,
+                    opacity: p.life,
+                    transform: `scale(${p.life})`
+                }}
+              />
+          ))}
+
+          {floatingTexts.map((text) => (
+             <div
                  key={text.id}
-                 className="absolute pointer-events-none text-2xl font-bold text-white animate-float-up z-50 drop-shadow-md"
+                 className={`absolute pointer-events-none font-bold animate-float-up z-50 drop-shadow-md whitespace-nowrap ${text.type === 'bonus' ? 'text-4xl text-yellow-400' : 'text-2xl text-white'}`}
                  style={{ 
-                   left: '50%', 
-                   top: '40%',
-                   // Using fixed positioning relative to button center for consistent look
+                   left: text.x, 
+                   top: text.y,
                    transform: `translate(-50%, -50%)`,
                  }}
                >
-                 +{text.value}
-               </div>
-             ))}
-          </div>
+                 {text.type === 'bonus' ? 'x10 POWER!' : `+${text.value}`}
+             </div>
+          ))}
 
           {/* Energy Bar */}
           <EnergyBar current={energy} />
 
        </div>
+
+        {/* RANDOM BONUS OBJECT */}
+        {showBonus && (
+            <button
+                onClick={handleBonusClick}
+                className="absolute z-50 animate-fly-random w-16 h-16 flex items-center justify-center"
+                style={{
+                    top: bonusPosition.top,
+                    left: bonusPosition.left,
+                }}
+            >
+                <div className="relative">
+                    <Rocket className="w-12 h-12 text-orange-500 fill-orange-500 drop-shadow-[0_0_15px_rgba(249,115,22,0.8)]" />
+                    <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-8 bg-gradient-to-t from-transparent to-blue-400 blur-sm"></div>
+                </div>
+            </button>
+        )}
 
        {/* Footer / Controls */}
        <div className="relative z-20 w-full px-6 py-6 pb-8 bg-gradient-to-t from-black via-black/90 to-transparent flex items-center justify-between gap-4 max-w-md mx-auto">
@@ -388,9 +538,6 @@ export default function App() {
              <span className="text-xs font-bold uppercase tracking-wider">Rankings</span>
           </button>
        </div>
-
-       {/* Floating Texts Container (Global) - for accurate positioning if needed */}
-       {/* Note: In this design, floating text is inside the button container for relative positioning */}
 
        {/* LEADERBOARD MODAL */}
        {showLeaderboard && (

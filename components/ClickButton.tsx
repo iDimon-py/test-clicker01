@@ -1,51 +1,110 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 interface ClickButtonProps {
-  onClick: (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => void;
+  onClick: (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => void;
   disabled: boolean;
+  multiplier: number;
 }
 
-export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled }) => {
+export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled, multiplier }) => {
+  const buttonRef = useRef<HTMLDivElement>(null);
+  const [transformStyle, setTransformStyle] = useState<string>('');
   const [isPressed, setIsPressed] = useState(false);
 
-  const handleStart = () => setIsPressed(true);
-  const handleEnd = () => setIsPressed(false);
+  // Reset tilt after a short delay to simulate "spring back"
+  useEffect(() => {
+    if (transformStyle) {
+      const timer = setTimeout(() => {
+        setTransformStyle('');
+        setIsPressed(false);
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [transformStyle]);
 
-  const handleClick = (e: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
+  const handleInteraction = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
     if (disabled) return;
+
+    // Call the parent click handler immediately
     onClick(e);
+    setIsPressed(true);
+
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      let clientX, clientY;
+
+      if ('touches' in e) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = (e as React.MouseEvent).clientX;
+        clientY = (e as React.MouseEvent).clientY;
+      }
+
+      // Calculate distance from center
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      
+      const offsetX = clientX - centerX;
+      const offsetY = clientY - centerY;
+
+      // Calculate rotation (Cymbal effect)
+      // Max rotation degrees
+      const maxRot = 20; 
+      
+      // If we click RIGHT, we want the Right side to go DOWN (Rotate Y positive? No, Rotate Y makes it spin around Y axis)
+      // CSS rotateY: positive value moves right side AWAY (into screen).
+      // CSS rotateX: positive value moves top side AWAY (into screen) -> bottom comes OUT.
+      
+      // Logic: Click Top -> Top goes in (RotateX > 0). Click Bottom -> Bottom goes in (RotateX < 0)
+      const rotateX = -(offsetY / (rect.height / 2)) * maxRot; 
+      const rotateY = (offsetX / (rect.width / 2)) * maxRot;
+
+      // Apply 3D transform
+      setTransformStyle(`perspective(800px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(0.95)`);
+    }
   };
 
   return (
     <div className="relative flex items-center justify-center w-full h-full max-h-[400px] aspect-square">
       {/* Background Glow Ring */}
-      <div className={`absolute inset-0 rounded-full blur-[60px] transition-all duration-500 ${disabled ? 'bg-red-900/20' : 'bg-blue-600/30'}`} />
+      <div className={`absolute inset-0 rounded-full blur-[60px] transition-all duration-500 ${disabled ? 'bg-red-900/20' : multiplier > 1 ? 'bg-yellow-500/40 animate-pulse' : 'bg-blue-600/30'}`} />
 
-      <button
+      <div
+        ref={buttonRef}
         className={`
           relative w-64 h-64 sm:w-80 sm:h-80 rounded-full 
           flex items-center justify-center
-          transition-all duration-100 ease-in-out
-          focus:outline-none touch-manipulation
-          ${isPressed && !disabled ? 'scale-95' : 'scale-100'}
-          ${disabled ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:scale-105 active:scale-95'}
+          focus:outline-none touch-none select-none
+          ${disabled ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer'}
         `}
-        onMouseDown={handleStart}
-        onMouseUp={handleEnd}
-        onMouseLeave={handleEnd}
-        onTouchStart={handleStart}
-        onTouchEnd={handleEnd}
-        onClick={handleClick}
-        disabled={disabled}
+        style={{
+          transform: transformStyle || 'perspective(800px) rotateX(0deg) rotateY(0deg) scale(1)',
+          transition: 'transform 0.1s cubic-bezier(0.1, 0.7, 1.0, 0.1)' // Snappy spring
+        }}
+        onMouseDown={handleInteraction}
+        onTouchStart={handleInteraction}
       >
-        {/* Outer Ring */}
-        <div className={`absolute inset-0 rounded-full border-4 border-slate-800/80 bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden z-10`}>
-             {/* Inner Gradient - simulates a planet or energy core */}
-            <div className={`w-full h-full rounded-full bg-gradient-to-br ${disabled ? 'from-slate-700 to-slate-900' : 'from-cyan-500 via-blue-600 to-purple-700'} opacity-90 relative overflow-hidden`}>
+        {/* Outer Ring / Rim */}
+        <div className={`
+            absolute inset-0 rounded-full border-4 
+            ${multiplier > 1 ? 'border-yellow-500/80' : 'border-slate-800/80'} 
+            bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden z-10 transition-colors duration-300
+        `}>
+             {/* Inner Gradient - Planet Core */}
+            <div className={`
+                w-full h-full rounded-full bg-gradient-to-br 
+                ${disabled ? 'from-slate-700 to-slate-900' : multiplier > 1 ? 'from-yellow-400 via-orange-500 to-red-600' : 'from-cyan-500 via-blue-600 to-purple-700'} 
+                opacity-90 relative overflow-hidden transition-colors duration-500
+            `}>
                 
-                {/* Surface detail texture */}
+                {/* Surface Texture */}
                 <div className="absolute inset-0 opacity-30 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] mix-blend-overlay"></div>
                 
+                {/* Center Anchor Point (The Cymbal Stand) */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-black/20 rounded-full blur-md z-20"></div>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white/10 rounded-full border border-white/20 z-30 shadow-inner"></div>
+
                 {/* Shine reflection */}
                 <div className="absolute top-4 left-10 w-24 h-12 bg-white/20 blur-xl rounded-full transform -rotate-12"></div>
                 
@@ -54,11 +113,11 @@ export const ClickButton: React.FC<ClickButtonProps> = ({ onClick, disabled }) =
             </div>
         </div>
 
-        {/* Pulse Ring Animation (Only when active) */}
+        {/* Pulse Ring Animation */}
         {!disabled && (
-           <div className="absolute -inset-4 rounded-full border-2 border-cyan-500/30 animate-pulse-glow z-0"></div>
+           <div className={`absolute -inset-4 rounded-full border-2 ${multiplier > 1 ? 'border-yellow-400/50' : 'border-cyan-500/30'} animate-pulse-glow z-0`}></div>
         )}
-      </button>
+      </div>
     </div>
   );
 };
