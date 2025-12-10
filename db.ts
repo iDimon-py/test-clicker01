@@ -58,7 +58,7 @@ const getFromLocal = (username: string): UserData | null => {
 // --- PUBLIC API ---
 
 export const loginUser = async (username: string): Promise<{ user: UserData | null, error: string | null, offline: boolean }> => {
-  // 1. Check Local Storage first (Optimization for offline-first feel)
+  // 1. Check Local Storage first (Optimization + Sync Check)
   let localData = getFromLocal(username);
 
   try {
@@ -69,41 +69,52 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
       .eq('username', username)
       .single();
 
-    // If Supabase works and found user
+    // CASE A: User exists in DB
     if (data && !error) {
       const dbUser = mapFromDB(data as DBUser);
-      // Determine which is newer: DB or Local?
-      // Usually DB is source of truth, but if we played offline, Local might be newer.
-      // For simplicity here: DB wins on login, but we immediately sync local.
+      
+      // SMART SYNC: If local progress is significantly better than DB, upload local to DB.
+      // This handles the case where user played offline and now reconnects.
+      if (localData && localData.score > dbUser.score) {
+          console.log("Local score higher than DB. Syncing to cloud...");
+          await updateUserProgress(username, localData); // Upload local data
+          localStorage.setItem(SESSION_KEY, username);
+          return { user: localData, error: null, offline: false };
+      }
+
+      // Otherwise, DB is source of truth
       saveToLocal(username, dbUser); 
       localStorage.setItem(SESSION_KEY, username);
       return { user: dbUser, error: null, offline: false };
     }
 
-    // If Supabase works but user NOT found (PGRST116), try to create in DB
+    // CASE B: User not found in DB (Create new)
     if (error && error.code === 'PGRST116') {
-      const newUser: DBUser = {
+      // If we have local data for this username, allow uploading it as the "New" user data
+      const initialUser: UserData = localData || {
         username,
         score: 0,
         energy: MAX_ENERGY,
-        last_updated: Date.now(),
-        last_reward_time: 0
+        lastUpdated: Date.now(),
+        lastRewardTime: 0
       };
 
-      const { error: insertError } = await supabase.from('users').insert([newUser]);
+      const dbInitial = mapToDB(initialUser);
+      // Ensure username is set for insert
+      (dbInitial as any).username = username; 
+
+      const { error: insertError } = await supabase.from('users').insert([dbInitial]);
       
-      // If Insert succeeds
       if (!insertError) {
-        saveToLocal(username, mapFromDB(newUser));
+        saveToLocal(username, initialUser);
         localStorage.setItem(SESSION_KEY, username);
-        return { user: mapFromDB(newUser), error: null, offline: false };
+        return { user: initialUser, error: null, offline: false };
       }
       
-      // If Insert fails (RLS or other), fall through to Offline mode below
-      console.warn("DB Insert failed, falling back to offline:", insertError.message);
+      console.warn("DB Insert failed (RLS?), falling back to offline:", insertError.message);
     }
     
-    // If we have a generic error (Network, etc)
+    // Generic Error Logging
     if (error && error.code !== 'PGRST116') {
       console.warn("DB Connection failed:", error.message);
     }
@@ -113,13 +124,12 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
   }
 
   // 3. Fallback: Offline Mode
-  // If we found local data earlier, use it.
   if (localData) {
     localStorage.setItem(SESSION_KEY, username);
     return { user: localData, error: "Playing in Offline Mode", offline: true };
   }
 
-  // If no local data and DB failed, create a fresh local user
+  // Create fresh offline user
   const newLocalUser: UserData = {
     username,
     score: 0,
@@ -142,11 +152,11 @@ export const getSessionUser = async (): Promise<UserData | null> => {
   const username = localStorage.getItem(SESSION_KEY);
   if (!username) return null;
 
-  // Try local first for instant load
+  // Always return local immediately for UI speed
   const local = getFromLocal(username);
   
-  // Optionally update from DB in background? 
-  // For now, just return what we have.
+  // Optionally: Trigger a background re-fetch here if needed, 
+  // but App.tsx handles re-syncing via updateUserProgress loop usually.
   return local;
 };
 
@@ -157,20 +167,29 @@ export const logoutUser = () => {
 export const updateUserProgress = async (username: string, data: Partial<UserData>) => {
   // 1. Always update local first
   const currentLocal = getFromLocal(username);
+  let updatedLocal = data as UserData;
+
   if (currentLocal) {
-    const updated = { ...currentLocal, ...data, lastUpdated: Date.now() };
-    saveToLocal(username, updated);
+    updatedLocal = { ...currentLocal, ...data, lastUpdated: Date.now() };
+    saveToLocal(username, updatedLocal);
   }
 
-  // 2. Try Supabase update (Fire and forget)
+  // 2. Try Supabase update
   const dbData = mapToDB({ ...data, lastUpdated: Date.now() });
   
+  // We use the promise but don't await it to keep UI snappy (fire and forget)
+  // However, we log errors if they happen.
   supabase
     .from('users')
     .update(dbData)
     .eq('username', username)
     .then(({ error }) => {
-      if (error) console.warn("Background sync failed:", error.message);
+      if (error) {
+          // If error is RLS related, we just stay silent as local storage has the data
+          if (error.code !== "42501") { 
+            console.warn("Cloud sync failed:", error.message);
+          }
+      }
     });
 };
 
