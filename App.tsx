@@ -10,7 +10,8 @@ import {
   REWARD_MIN,
   REWARD_MAX,
   SKINS,
-  SkinConfig
+  SkinConfig,
+  SYNC_INTERVAL_MS
 } from './constants';
 import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
@@ -32,6 +33,24 @@ export default function App() {
   const [ownedSkins, setOwnedSkins] = useState<number[]>([0]);
   const [currentSkinId, setCurrentSkinId] = useState<number>(0);
   
+  // REFS for Event Listeners (To access latest state without re-binding listeners)
+  const scoreRef = useRef(score);
+  const energyRef = useRef(energy);
+  const lastRewardTimeRef = useRef(lastRewardTime);
+  const ownedSkinsRef = useRef(ownedSkins);
+  const currentSkinIdRef = useRef(currentSkinId);
+  const currentUserRef = useRef(currentUser);
+
+  // Sync Refs with State
+  useEffect(() => {
+    scoreRef.current = score;
+    energyRef.current = energy;
+    lastRewardTimeRef.current = lastRewardTime;
+    ownedSkinsRef.current = ownedSkins;
+    currentSkinIdRef.current = currentSkinId;
+    currentUserRef.current = currentUser;
+  }, [score, energy, lastRewardTime, ownedSkins, currentSkinId, currentUser]);
+
   // Bonus State
   const [showBonus, setShowBonus] = useState(false);
   const [bonusPosition, setBonusPosition] = useState({ top: '50%', left: '50%' });
@@ -80,7 +99,6 @@ export default function App() {
     setCurrentSkinId(user.currentSkin || 0);
     
     // Calculate offline energy with current skin logic (approximation)
-    // Note: If they changed skin offline, this might be slightly off, but acceptable.
     const userSkin = SKINS.find(s => s.id === (user.currentSkin || 0)) || SKINS[0];
     const userMaxEnergy = userSkin.maxEnergy;
     const userRegenRate = userSkin.regenRateSec * 1000;
@@ -92,6 +110,20 @@ export default function App() {
     const offlineRegen = cycles * ENERGY_REGEN_AMOUNT;
     
     setEnergy(Math.min(userMaxEnergy, user.energy + offlineRegen));
+  };
+
+  // Helper to save current state immediately
+  const saveProgress = () => {
+    const user = currentUserRef.current;
+    if (!user) return;
+
+    DB.updateUserProgress(user.username, {
+      score: scoreRef.current,
+      energy: energyRef.current,
+      lastRewardTime: lastRewardTimeRef.current,
+      ownedSkins: ownedSkinsRef.current,
+      currentSkin: currentSkinIdRef.current
+    });
   };
 
   // Login Handler
@@ -118,6 +150,9 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Save before logout
+    saveProgress();
+
     DB.logoutUser();
     setCurrentUser(null);
     setShowLeaderboard(false);
@@ -131,22 +166,37 @@ export default function App() {
     setCurrentSkinId(0);
   };
 
-  // Sync with DB
+  // SAFETY: Save on Window Close / Tab Hide
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveProgress();
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      saveProgress();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
+  // Sync with DB (Interval)
   useEffect(() => {
     if (!currentUser) return;
 
     const syncInterval = setInterval(() => {
-        DB.updateUserProgress(currentUser.username, {
-            score,
-            energy,
-            lastRewardTime,
-            ownedSkins,
-            currentSkin: currentSkinId
-        });
-    }, 10000); // Changed from 3000 to 10000 (10 seconds)
+        saveProgress();
+    }, SYNC_INTERVAL_MS); 
 
     return () => clearInterval(syncInterval);
-  }, [currentUser, score, energy, lastRewardTime, ownedSkins, currentSkinId]);
+  }, [currentUser]); // Dependencies removed because saveProgress uses Refs
 
   // Energy Regen Loop (Dynamic based on Skin)
   useEffect(() => {
@@ -253,21 +303,15 @@ export default function App() {
       setLeaderboardLoading(true);
       
       // OPTIMIZATION: Force sync current score before fetching leaderboard
-      // This ensures "My Rank" is accurate immediately in the list
       if (currentUser) {
-          DB.updateUserProgress(currentUser.username, {
-              score,
-              energy,
-              lastRewardTime,
-              ownedSkins,
-              currentSkin: currentSkinId
-          }).then(() => {
-             // Fetch after sync completes
-             DB.getLeaderboard().then(data => {
-                setLeaderboardData(data);
-                setLeaderboardLoading(false);
-             });
-          });
+          saveProgress(); // Force save via ref helper
+          // Small delay to allow local storage/async call to initiate
+          setTimeout(() => {
+            DB.getLeaderboard().then(data => {
+              setLeaderboardData(data);
+              setLeaderboardLoading(false);
+            });
+          }, 100);
       } else {
          DB.getLeaderboard().then(data => {
             setLeaderboardData(data);
@@ -423,6 +467,8 @@ export default function App() {
           setCurrentSkinId(skin.id);
 
           // Force immediate sync to save purchase
+          // We can use the ref helper, but we need to update state first, 
+          // React updates state asynchronously, so let's call DB directly here for safety
           if (currentUser) {
             DB.updateUserProgress(currentUser.username, {
                 score: newScore,
@@ -438,7 +484,7 @@ export default function App() {
   const handleEquipSkin = (id: number) => {
       setCurrentSkinId(id);
       
-      // Force immediate sync to save selection
+      // Force immediate sync
       if (currentUser) {
         DB.updateUserProgress(currentUser.username, {
             score,

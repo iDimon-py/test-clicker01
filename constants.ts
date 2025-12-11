@@ -4,6 +4,12 @@ export const ENERGY_REGEN_AMOUNT = 1;
 export const ENERGY_COST_PER_CLICK = 1;
 export const CLICK_VALUE = 1;
 
+// SERVER SYNC CONFIGURATION
+// 10000 = 10 seconds. 
+// Increase this (e.g. 60000) to lower server load.
+// Decrease this (e.g. 5000) for more frequent saves (higher load).
+export const SYNC_INTERVAL_MS = 3000; 
+
 // Hourly Reward Constants
 export const REWARD_COOLDOWN_MS = 3600000; // 1 hour in ms
 export const REWARD_MIN = 50;
