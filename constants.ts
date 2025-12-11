@@ -8,7 +8,7 @@ export const CLICK_VALUE = 1;
 // 10000 = 10 seconds. 
 // Increase this (e.g. 60000) to lower server load.
 // Decrease this (e.g. 5000) for more frequent saves (higher load).
-export const SYNC_INTERVAL_MS = 3000; 
+export const SYNC_INTERVAL_MS = 5000; 
 
 // Hourly Reward Constants
 export const REWARD_COOLDOWN_MS = 3600000; // 1 hour in ms
