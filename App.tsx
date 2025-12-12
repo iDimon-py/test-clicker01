@@ -126,6 +126,36 @@ export default function App() {
     });
   };
 
+  // --- REALTIME SUBSCRIPTION ---
+  useEffect(() => {
+    if (!currentUser || isOfflineMode) return;
+
+    // Subscribe to external changes (e.g. Admin edits in Supabase Table)
+    const subscription = DB.subscribeToUser(currentUser.username, (newData) => {
+        console.log("Realtime Update Received from Server:", newData);
+        
+        // Update State (Visuals)
+        setScore(newData.score);
+        // We usually don't want to sync energy from server as it's highly dynamic locally, 
+        // but if the server sends it, we respect it as "Server Authority".
+        setEnergy(newData.energy); 
+        setLastRewardTime(newData.lastRewardTime);
+        setOwnedSkins(newData.ownedSkins);
+        setCurrentSkinId(newData.currentSkin);
+
+        // Update Refs (Logic Safety)
+        scoreRef.current = newData.score;
+        energyRef.current = newData.energy;
+        lastRewardTimeRef.current = newData.lastRewardTime;
+        ownedSkinsRef.current = newData.ownedSkins;
+        currentSkinIdRef.current = newData.currentSkin;
+    });
+
+    return () => {
+        subscription.unsubscribe();
+    };
+  }, [currentUser, isOfflineMode]);
+
   // Login Handler
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();

@@ -1,13 +1,13 @@
 # Cosmic Clicker: Technical Blueprint & Architecture
 
 ## 1. Executive Summary
-This is a high-performance, single-page React application designed as a Telegram Mini App style clicker game. It features high-fidelity UI (glassmorphism), a particle system rendered via Canvas API for performance, and a robust "Server-First" synchronization strategy using Supabase.
+This is a high-performance, single-page React application designed as a Telegram Mini App style clicker game. It features high-fidelity UI (glassmorphism), a particle system rendered via Canvas API for performance, and a robust "Server-First" synchronization strategy using Supabase with Realtime capabilities.
 
 ## 2. Tech Stack & Dependencies
 *   **Framework:** React 19 (Hooks intensive: `useState`, `useEffect`, `useRef`).
 *   **Styling:** Tailwind CSS (via CDN for portability).
 *   **Icons:** Lucide React.
-*   **Backend:** Supabase (PostgreSQL) + LocalStorage fallback.
+*   **Backend:** Supabase (PostgreSQL + Realtime) + LocalStorage fallback.
 *   **Fonts:** 'Outfit' (Google Fonts).
 
 ## 3. Core Architecture & State Management
@@ -19,15 +19,16 @@ To handle high-frequency events (clicking) and safety-critical events (closing t
     *   *Why?* Event listeners like `beforeunload` or `setInterval` closures capture stale state. Refs allow accessing the immediate value inside these closures without re-binding listeners, preventing memory leaks and logic errors.
 
 ### B. Server-First Database Layer (`db.ts`)
-The database layer (`db.ts`) prioritizes **Server Authority** to prevent data loss or accidental overwrites by buggy local data.
+The database layer (`db.ts`) prioritizes **Server Authority**.
 1.  **Read Strategy (Login):** 
     *   Fetches from Supabase first. 
-    *   If Supabase has data, it **overwrites** local storage. The Server is the Single Source of Truth.
-    *   This ensures that if a user switches devices or clears cache, they pull the correct high score from the cloud, rather than pushing a "0" score to the cloud.
-2.  **Write Strategy (Gameplay):**
-    *   Immediate write to LocalStorage (for offline safety).
+    *   If Supabase has data, it **overwrites** local storage.
+2.  **Realtime Subscription (Sync):**
+    *   The app subscribes to `postgres_changes` via Supabase Realtime.
+    *   If an external source (Admin, script) updates the user's row in the DB, the app **immediately** receives the new data and updates the UI. This ensures "Admin Authority".
+3.  **Write Strategy (Gameplay):**
+    *   Immediate write to LocalStorage.
     *   Async "fire-and-forget" write to Supabase.
-    *   If Supabase is unreachable, the app continues in "Offline Mode" seamlessly.
 
 ## 4. Performance Engineering
 
@@ -63,7 +64,7 @@ To prevent data loss:
 ## 6. File Structure & Responsibilities
 
 *   **`App.tsx`**: The "Game Engine". Handles the loop, input, UI composition, and acts as the controller.
-*   **`db.ts`**: The "Data Layer". Adapter pattern transforming DB `snake_case` to App `camelCase`. Handles Supabase and LocalStorage logic.
+*   **`db.ts`**: The "Data Layer". Adapter pattern transforming DB `snake_case` to App `camelCase`. Handles Supabase Realtime and LocalStorage logic.
 *   **`constants.ts`**: The "Config". Single source of truth for game balance, skins, and API intervals.
 *   **`components/ClickButton.tsx`**: Interactive core. Handles 3D tilt logic and haptic/visual feedback.
 *   **`components/EnergyBar.tsx`**: Visual representation of the energy tank.

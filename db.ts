@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, RealtimeChannel } from '@supabase/supabase-js';
 import { UserData } from './types';
 import { MAX_ENERGY } from './constants';
 
@@ -80,9 +80,6 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
       const dbUser = mapFromDB(data as DBUser);
       
       // SERVER AUTHORITY:
-      // We explicitly ignore local data here. The DB is the Single Source of Truth.
-      // This prevents a scenario where a local device reset (score 0) overwrites the server.
-      // We download DB data and overwrite local cache.
       console.log("Syncing from Server...");
       saveToLocal(username, dbUser); 
       localStorage.setItem(SESSION_KEY, username);
@@ -92,8 +89,6 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
 
     // CASE B: User not found in DB (Create new)
     if (error && error.code === 'PGRST116') {
-      // Only if user DOES NOT exist in DB, we look at local data to see if we should create them
-      // based on a previous session, otherwise new user.
       const initialUser: UserData = localData || {
         username,
         score: 0,
@@ -105,7 +100,6 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
       };
 
       const dbInitial = mapToDB(initialUser);
-      // Ensure username is set for insert
       (dbInitial as any).username = username; 
 
       const { error: insertError } = await supabase.from('users').insert([dbInitial]);
@@ -129,13 +123,11 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
   }
 
   // 3. Fallback: Offline Mode
-  // We only reach here if DB connection completely failed.
   if (localData) {
     localStorage.setItem(SESSION_KEY, username);
     return { user: localData, error: "Playing in Offline Mode", offline: true };
   }
 
-  // Create fresh offline user
   const newLocalUser: UserData = {
     username,
     score: 0,
@@ -159,13 +151,7 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
 export const getSessionUser = async (): Promise<UserData | null> => {
   const username = localStorage.getItem(SESSION_KEY);
   if (!username) return null;
-
-  // Always return local immediately for UI speed
-  const local = getFromLocal(username);
-  
-  // Optionally: Trigger a background re-fetch here if needed, 
-  // but App.tsx handles re-syncing via updateUserProgress loop usually.
-  return local;
+  return getFromLocal(username);
 };
 
 export const logoutUser = () => {
@@ -173,7 +159,7 @@ export const logoutUser = () => {
 };
 
 export const updateUserProgress = async (username: string, data: Partial<UserData>) => {
-  // 1. Always update local first (for instant UI feedback and offline safety)
+  // 1. Always update local first
   const currentLocal = getFromLocal(username);
   let updatedLocal = data as UserData;
 
@@ -185,18 +171,13 @@ export const updateUserProgress = async (username: string, data: Partial<UserDat
   // 2. Try Supabase update
   const dbData = mapToDB({ ...data, lastUpdated: Date.now() });
   
-  // We use the promise but don't await it to keep UI snappy (fire and forget)
-  // However, we log errors if they happen.
   supabase
     .from('users')
     .update(dbData)
     .eq('username', username)
     .then(({ error }) => {
-      if (error) {
-          // If error is RLS related, we just stay silent as local storage has the data
-          if (error.code !== "42501") { 
-            console.warn("Cloud sync failed:", error.message);
-          }
+      if (error && error.code !== "42501") { 
+          console.warn("Cloud sync failed:", error.message);
       }
     });
 };
@@ -209,11 +190,32 @@ export const getLeaderboard = async (): Promise<UserData[]> => {
       .order('score', { ascending: false })
       .limit(50);
 
-    if (error || !data) {
-        return [];
-    }
+    if (error || !data) return [];
     return (data as DBUser[]).map(mapFromDB);
   } catch (e) {
     return [];
   }
+};
+
+// --- REALTIME SUBSCRIPTION ---
+export const subscribeToUser = (username: string, onUpdate: (data: UserData) => void): RealtimeChannel => {
+  return supabase
+    .channel(`user-updates-${username}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'users',
+        filter: `username=eq.${username}`,
+      },
+      (payload) => {
+        // Convert the "new" DB row to our App format
+        if (payload.new) {
+          const newData = mapFromDB(payload.new as DBUser);
+          onUpdate(newData);
+        }
+      }
+    )
+    .subscribe();
 };
