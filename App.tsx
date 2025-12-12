@@ -15,7 +15,7 @@ import {
 } from './constants';
 import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock, Smartphone, Monitor, RefreshCw } from 'lucide-react';
+import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock, Smartphone, Monitor, RefreshCw, Radio } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
@@ -24,7 +24,10 @@ export default function App() {
   const [isLoginProcessing, setIsLoginProcessing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [deviceType, setDeviceType] = useState<'mobile' | 'desktop'>('desktop');
+  
+  // SYNC GUARD STATES
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isTabActive, setIsTabActive] = useState(true);
   
   // Game State
   const [score, setScore] = useState<number>(0);
@@ -135,40 +138,56 @@ export default function App() {
     });
   };
 
-  // --- FORCE SYNC ON FOCUS ---
-  // This prevents the "Stale Tab" issue where an old open tab overwrites new data
+  // --- FORCE SYNC ON FOCUS (THE GUARD) ---
   const revalidateSession = async () => {
     const user = currentUserRef.current;
-    if (!user || isOfflineMode) return;
+    if (!user || isOfflineMode) {
+        setIsTabActive(true); // Just unblock if offline
+        return;
+    }
 
-    console.log("App focused: Revalidating session...");
+    console.log("GUARD: Revalidating session...");
     setIsSyncing(true);
     
-    // We fetch the fresh user data without the full login logic (no create)
-    const { user: freshUser } = await DB.loginUser(user.username);
-    
-    if (freshUser) {
-        console.log("Session revalidated. Cloud score:", freshUser.score);
-        setupUser(freshUser, false);
+    // Fetch latest data from DB
+    try {
+        const { user: freshUser } = await DB.loginUser(user.username);
+        if (freshUser) {
+            console.log("GUARD: Synced. New Score:", freshUser.score);
+            setupUser(freshUser, false);
+        }
+    } catch (e) {
+        console.error("Sync failed", e);
+    } finally {
+        // Only unblock the UI after we have processed the data
+        setTimeout(() => {
+            setIsSyncing(false);
+            setIsTabActive(true);
+        }, 500); // Small buffer to ensure state is settled
     }
-    
-    setTimeout(() => setIsSyncing(false), 1000);
   };
 
-  // SAFETY: Save on Window Close / Tab Hide
-  // AND Sync on Tab Show
+  // SAFETY: Save on Window Close / Tab Hide / AND Sync Guard
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        console.log("Tab Hidden: Pausing & Saving");
+        // 1. Save current progress
         saveProgress();
+        // 2. Lock the screen immediately so they can't click when they return without sync
+        setIsTabActive(false);
       } else if (document.visibilityState === 'visible') {
-        // When tab becomes active again, pull latest data!
+        console.log("Tab Visible: Triggering Sync");
+        // 3. Trigger revalidation
         revalidateSession();
       }
     };
 
+    // Backup for window focus (switching windows without minimizing browser)
     const handleWindowFocus = () => {
-        revalidateSession();
+        if (!isTabActive) {
+            revalidateSession();
+        }
     };
 
     const handleBeforeUnload = () => {
@@ -184,7 +203,7 @@ export default function App() {
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isOfflineMode]);
+  }, [isOfflineMode, isTabActive]);
 
   // --- REALTIME SUBSCRIPTION ---
   useEffect(() => {
@@ -270,6 +289,7 @@ export default function App() {
   // Energy Regen Loop (Dynamic based on Skin)
   useEffect(() => {
     if (!currentUser) return;
+    if (!isTabActive) return; // Don't regen visual energy if tab is inactive (prevent drift)
 
     const timer = setInterval(() => {
       setEnergy((prevEnergy) => {
@@ -279,7 +299,7 @@ export default function App() {
     }, regenRate); // Uses variable derived from state
 
     return () => clearInterval(timer);
-  }, [currentUser, maxEnergy, regenRate]);
+  }, [currentUser, maxEnergy, regenRate, isTabActive]);
 
   // Multiplier Timer Loop
   useEffect(() => {
@@ -304,7 +324,7 @@ export default function App() {
         const delay = Math.random() * (maxDelay - minDelay) + minDelay;
         
         return setTimeout(() => {
-            spawnBonus();
+            if (isTabActive) spawnBonus();
             // Schedule the next one recursively
             scheduleNextBonus();
         }, delay);
@@ -312,7 +332,7 @@ export default function App() {
 
     const timerId = scheduleNextBonus();
     return () => clearTimeout(timerId);
-  }, [currentUser]);
+  }, [currentUser, isTabActive]);
 
   const spawnBonus = () => {
       // Random start position
@@ -392,6 +412,7 @@ export default function App() {
 
   // --- CLICK INTERACTION ---
   const handleTap = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isTabActive || isSyncing) return; // BLOCK CLICKS IF SYNCING
     if (energy < ENERGY_COST_PER_CLICK) return;
 
     const points = skinClickValue * multiplier; // Uses skin base value
@@ -651,6 +672,24 @@ export default function App() {
           className="absolute inset-0 z-30 pointer-events-none"
        />
 
+       {/* --- SYNC GUARD OVERLAY --- */}
+       {(!isTabActive || isSyncing) && !isOfflineMode && (
+         <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center animate-fade-in-up">
+            <div className="relative">
+                <div className="absolute inset-0 bg-cyan-500/20 blur-xl rounded-full animate-pulse"></div>
+                <Radio className="w-16 h-16 text-cyan-400 animate-pulse relative z-10" />
+            </div>
+            <h2 className="text-2xl font-bold mt-6 text-white tracking-widest uppercase">Signal Lost</h2>
+            <div className="flex items-center gap-2 mt-2 text-cyan-400">
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span className="text-sm font-mono">{isSyncing ? "Syncing Data..." : "Re-establishing Uplink..."}</span>
+            </div>
+            <p className="mt-4 text-slate-500 text-xs text-center max-w-xs px-4">
+               Focus on the app to resume. Data is being re-verified to prevent timeline corruption.
+            </p>
+         </div>
+       )}
+
        {/* Navbar / Header */}
        <div className="relative z-10 w-full px-6 py-4 flex justify-between items-center backdrop-blur-sm bg-slate-900/30 border-b border-white/5">
           <div className="flex items-center gap-2">
@@ -722,7 +761,7 @@ export default function App() {
           <div className="relative w-full max-w-[320px] aspect-square mb-8">
              <ClickButton 
                 onClick={handleTap} 
-                disabled={energy < ENERGY_COST_PER_CLICK} 
+                disabled={energy < ENERGY_COST_PER_CLICK || !isTabActive || isSyncing} 
                 multiplier={multiplier} 
                 skin={activeSkin}
              />
@@ -767,7 +806,7 @@ export default function App() {
        </div>
 
         {/* RANDOM BONUS OBJECT */}
-        {showBonus && (
+        {showBonus && isTabActive && (
             <button
                 onClick={handleBonusClick}
                 className="absolute z-50 animate-fly-random w-16 h-16 flex items-center justify-center"
