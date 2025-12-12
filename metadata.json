@@ -1,5 +1,5 @@
 {
   "name": "ПРОЕКТ КЛИКЕР",
-  "description": "A visually stunning Telegram-style clicker app with energy management and smooth animations.",
+  "description": "Создал кликер, отправил его на ГитХаб, с хаба выгрузил на vercel и там он работает. Подключил БД supabase\n\nПроверить https://test-clicker01.vercel.app/",
   "requestFramePermissions": []
 }

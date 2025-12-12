@@ -64,7 +64,7 @@ const getFromLocal = (username: string): UserData | null => {
 // --- PUBLIC API ---
 
 export const loginUser = async (username: string): Promise<{ user: UserData | null, error: string | null, offline: boolean }> => {
-  // 1. Check Local Storage first (Optimization + Sync Check)
+  // 1. Check Local Storage first (Optimization only, NOT Authority)
   let localData = getFromLocal(username);
 
   try {
@@ -79,24 +79,21 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
     if (data && !error) {
       const dbUser = mapFromDB(data as DBUser);
       
-      // SMART SYNC: If local progress is significantly better than DB, upload local to DB.
-      // This handles the case where user played offline and now reconnects.
-      if (localData && localData.score > dbUser.score) {
-          console.log("Local score higher than DB. Syncing to cloud...");
-          await updateUserProgress(username, localData); // Upload local data
-          localStorage.setItem(SESSION_KEY, username);
-          return { user: localData, error: null, offline: false };
-      }
-
-      // Otherwise, DB is source of truth
+      // SERVER AUTHORITY:
+      // We explicitly ignore local data here. The DB is the Single Source of Truth.
+      // This prevents a scenario where a local device reset (score 0) overwrites the server.
+      // We download DB data and overwrite local cache.
+      console.log("Syncing from Server...");
       saveToLocal(username, dbUser); 
       localStorage.setItem(SESSION_KEY, username);
+      
       return { user: dbUser, error: null, offline: false };
     }
 
     // CASE B: User not found in DB (Create new)
     if (error && error.code === 'PGRST116') {
-      // If we have local data for this username, allow uploading it as the "New" user data
+      // Only if user DOES NOT exist in DB, we look at local data to see if we should create them
+      // based on a previous session, otherwise new user.
       const initialUser: UserData = localData || {
         username,
         score: 0,
@@ -132,6 +129,7 @@ export const loginUser = async (username: string): Promise<{ user: UserData | nu
   }
 
   // 3. Fallback: Offline Mode
+  // We only reach here if DB connection completely failed.
   if (localData) {
     localStorage.setItem(SESSION_KEY, username);
     return { user: localData, error: "Playing in Offline Mode", offline: true };
@@ -175,7 +173,7 @@ export const logoutUser = () => {
 };
 
 export const updateUserProgress = async (username: string, data: Partial<UserData>) => {
-  // 1. Always update local first
+  // 1. Always update local first (for instant UI feedback and offline safety)
   const currentLocal = getFromLocal(username);
   let updatedLocal = data as UserData;
 

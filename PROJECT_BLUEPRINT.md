@@ -1,7 +1,7 @@
 # Cosmic Clicker: Technical Blueprint & Architecture
 
 ## 1. Executive Summary
-This is a high-performance, single-page React application designed as a Telegram Mini App style clicker game. It features high-fidelity UI (glassmorphism), a particle system rendered via Canvas API for performance, and a robust offline-first synchronization strategy using Supabase.
+This is a high-performance, single-page React application designed as a Telegram Mini App style clicker game. It features high-fidelity UI (glassmorphism), a particle system rendered via Canvas API for performance, and a robust "Server-First" synchronization strategy using Supabase.
 
 ## 2. Tech Stack & Dependencies
 *   **Framework:** React 19 (Hooks intensive: `useState`, `useEffect`, `useRef`).
@@ -18,12 +18,14 @@ To handle high-frequency events (clicking) and safety-critical events (closing t
 2.  **Refs (`useRef`)**: Holds the *latest* values of score, energy, etc.
     *   *Why?* Event listeners like `beforeunload` or `setInterval` closures capture stale state. Refs allow accessing the immediate value inside these closures without re-binding listeners, preventing memory leaks and logic errors.
 
-### B. Offline-First Database Layer (`db.ts`)
-The database layer (`db.ts`) is designed to prioritize user experience and data safety:
-1.  **Read Strategy:** Checks LocalStorage first (instant load), then fetches from Supabase.
-2.  **Conflict Resolution:** If LocalStorage score > Supabase score (e.g., user played offline), the local data overwrites the cloud data.
-3.  **Write Strategy:**
-    *   Immediate write to LocalStorage.
+### B. Server-First Database Layer (`db.ts`)
+The database layer (`db.ts`) prioritizes **Server Authority** to prevent data loss or accidental overwrites by buggy local data.
+1.  **Read Strategy (Login):** 
+    *   Fetches from Supabase first. 
+    *   If Supabase has data, it **overwrites** local storage. The Server is the Single Source of Truth.
+    *   This ensures that if a user switches devices or clears cache, they pull the correct high score from the cloud, rather than pushing a "0" score to the cloud.
+2.  **Write Strategy (Gameplay):**
+    *   Immediate write to LocalStorage (for offline safety).
     *   Async "fire-and-forget" write to Supabase.
     *   If Supabase is unreachable, the app continues in "Offline Mode" seamlessly.
 
@@ -55,7 +57,7 @@ Skins are not just cosmetic; they act as the upgrade tree:
 
 ### C. Safety Saving
 To prevent data loss:
-1.  **Interval Sync:** Autosave every `SYNC_INTERVAL_MS` (default 10s).
+1.  **Interval Sync:** Autosave every `SYNC_INTERVAL_MS` (default 5-10s).
 2.  **Force Save:** Triggers on `window.beforeunload` and `document.visibilitychange` (tab switch/close).
 
 ## 6. File Structure & Responsibilities
