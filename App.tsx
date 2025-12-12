@@ -15,7 +15,7 @@ import {
 } from './constants';
 import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock, Smartphone, Monitor } from 'lucide-react';
+import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock, Smartphone, Monitor, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
@@ -24,6 +24,7 @@ export default function App() {
   const [isLoginProcessing, setIsLoginProcessing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [deviceType, setDeviceType] = useState<'mobile' | 'desktop'>('desktop');
+  const [isSyncing, setIsSyncing] = useState(false);
   
   // Game State
   const [score, setScore] = useState<number>(0);
@@ -134,6 +135,57 @@ export default function App() {
     });
   };
 
+  // --- FORCE SYNC ON FOCUS ---
+  // This prevents the "Stale Tab" issue where an old open tab overwrites new data
+  const revalidateSession = async () => {
+    const user = currentUserRef.current;
+    if (!user || isOfflineMode) return;
+
+    console.log("App focused: Revalidating session...");
+    setIsSyncing(true);
+    
+    // We fetch the fresh user data without the full login logic (no create)
+    const { user: freshUser } = await DB.loginUser(user.username);
+    
+    if (freshUser) {
+        console.log("Session revalidated. Cloud score:", freshUser.score);
+        setupUser(freshUser, false);
+    }
+    
+    setTimeout(() => setIsSyncing(false), 1000);
+  };
+
+  // SAFETY: Save on Window Close / Tab Hide
+  // AND Sync on Tab Show
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveProgress();
+      } else if (document.visibilityState === 'visible') {
+        // When tab becomes active again, pull latest data!
+        revalidateSession();
+      }
+    };
+
+    const handleWindowFocus = () => {
+        revalidateSession();
+    };
+
+    const handleBeforeUnload = () => {
+      saveProgress();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isOfflineMode]);
+
   // --- REALTIME SUBSCRIPTION ---
   useEffect(() => {
     if (!currentUser || isOfflineMode) return;
@@ -203,27 +255,6 @@ export default function App() {
     setOwnedSkins([0]);
     setCurrentSkinId(0);
   };
-
-  // SAFETY: Save on Window Close / Tab Hide
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        saveProgress();
-      }
-    };
-
-    const handleBeforeUnload = () => {
-      saveProgress();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, []);
 
   // Sync with DB (Interval)
   useEffect(() => {
@@ -627,7 +658,10 @@ export default function App() {
                 <span className="font-bold text-xs">{currentUser.username.substring(0, 2).toUpperCase()}</span>
              </div>
              <div className="flex flex-col">
-                <span className="font-bold text-sm tracking-wide">{currentUser.username}</span>
+                <span className="font-bold text-sm tracking-wide flex items-center gap-2">
+                   {currentUser.username}
+                   {isSyncing && <RefreshCw className="w-3 h-3 animate-spin text-cyan-500" />}
+                </span>
                 <div className="flex items-center gap-3">
                     {/* Connection Status */}
                     {isOfflineMode ? (
