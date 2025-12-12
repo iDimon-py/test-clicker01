@@ -63,6 +63,28 @@ const getFromLocal = (username: string): UserData | null => {
 
 // --- PUBLIC API ---
 
+// STRICT SERVER FETCH (Bypasses Local Cache Read)
+export const forceFetchUser = async (username: string): Promise<UserData | null> => {
+    try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('username', username)
+          .single();
+
+        if (data && !error) {
+            const dbUser = mapFromDB(data as DBUser);
+            // Update local cache with the fresh server data
+            saveToLocal(username, dbUser);
+            return dbUser;
+        }
+        return null;
+    } catch (e) {
+        console.error("Force fetch failed:", e);
+        return null;
+    }
+};
+
 export const loginUser = async (username: string): Promise<{ user: UserData | null, error: string | null, offline: boolean }> => {
   // 1. Check Local Storage first (Optimization only, NOT Authority)
   let localData = getFromLocal(username);

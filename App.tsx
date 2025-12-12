@@ -146,15 +146,21 @@ export default function App() {
         return;
     }
 
+    // prevent duplicate sync calls if already syncing
+    if (isSyncing) return;
+
     console.log("GUARD: Revalidating session...");
     setIsSyncing(true);
     
-    // Fetch latest data from DB
+    // Fetch latest data from DB (BYPASSING LOCAL CACHE)
     try {
-        const { user: freshUser } = await DB.loginUser(user.username);
+        const freshUser = await DB.forceFetchUser(user.username);
+        
         if (freshUser) {
             console.log("GUARD: Synced. New Score:", freshUser.score);
             setupUser(freshUser, false);
+        } else {
+            console.warn("GUARD: Failed to fetch fresh data, keeping local for now.");
         }
     } catch (e) {
         console.error("Sync failed", e);
@@ -185,7 +191,7 @@ export default function App() {
 
     // Backup for window focus (switching windows without minimizing browser)
     const handleWindowFocus = () => {
-        if (!isTabActive) {
+        if (!isTabActive && !isSyncing) {
             revalidateSession();
         }
     };
@@ -203,7 +209,7 @@ export default function App() {
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isOfflineMode, isTabActive]);
+  }, [isOfflineMode, isTabActive, isSyncing]);
 
   // --- REALTIME SUBSCRIPTION ---
   useEffect(() => {
@@ -243,6 +249,7 @@ export default function App() {
     setIsLoginProcessing(true);
     setLoginError(null);
     
+    // LoginUser already does a DB check
     const { user, error, offline } = await DB.loginUser(usernameInput.trim());
     
     setIsLoginProcessing(false);
@@ -409,6 +416,14 @@ export default function App() {
       }
     }
   }, [showLeaderboard]);
+
+  // --- NAVIGATION LOGIC ---
+  const handleCloseAndSync = () => {
+      setShowShop(false);
+      setShowLeaderboard(false);
+      // Trigger the guard logic to pull latest DB changes (including manual edits)
+      revalidateSession();
+  };
 
   // --- CLICK INTERACTION ---
   const handleTap = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -876,7 +891,7 @@ export default function App() {
                             <p className="text-xs text-slate-400">Upgrade your cosmic plate</p>
                         </div>
                     </div>
-                    <button onClick={() => setShowShop(false)} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
+                    <button onClick={handleCloseAndSync} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
                 </div>
                 
                 <div className="p-4 bg-slate-900/80 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
@@ -952,7 +967,7 @@ export default function App() {
                     </div>
                   </div>
                   <button 
-                    onClick={() => setShowLeaderboard(false)}
+                    onClick={handleCloseAndSync}
                     className="p-2 hover:bg-slate-800 rounded-full transition-colors"
                   >
                     <X className="w-5 h-5 text-slate-400" />
