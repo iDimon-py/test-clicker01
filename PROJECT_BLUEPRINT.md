@@ -75,9 +75,9 @@ To prevent data loss:
 *   **Glassmorphism:** `backdrop-blur`, semi-transparent borders, and inner shadows used on panels.
 *   **Animations:** Smooth transitions, floating text for damage numbers, particle explosions on click.
 
-## 8. Instructions for AI Replication
-If asking another AI to modify this project:
-1.  **Respect the Refs:** Always update the Ref when updating State if that variable is needed in a timer or event listener.
-2.  **Preserve Constants:** Do not hardcode magic numbers in components; use `constants.ts`.
-3.  **Maintain Types:** Ensure `UserData` interface matches the Supabase schema mapping in `db.ts`.
-4.  **Aesthetics First:** Keep the Tailwind classes for glows, gradients, and blurs. This allows the "premium" feel.
+## 8. Cross-Device & Session Logic
+*   **Identity Source:** Users are identified solely by `username`.
+*   **Device Detection:** The client (`App.tsx`) detects the hardware type using `window.matchMedia('(pointer: coarse)')`.
+    *   If coarse pointer (Touch) -> **Mobile** Mode.
+    *   If fine pointer (Mouse) -> **Desktop** Mode.
+*   **Simultaneous Sessions:** Due to the **Realtime** logic in Section 3B, a user can log in on PC and Mobile simultaneously. Actions on one device (e.g., clicking on mobile) will update the score on the other device (PC) in real-time. The visual "Device Type" indicator is local to the specific session.

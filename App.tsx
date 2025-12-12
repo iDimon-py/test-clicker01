@@ -15,7 +15,7 @@ import {
 } from './constants';
 import { FloatingText, Particle, UserData } from './types';
 import * as DB from './db';
-import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock } from 'lucide-react';
+import { Trophy, Gift, X, LogIn, Gamepad2, Loader2, AlertCircle, WifiOff, Cloud, Rocket, ShoppingBag, Check, Lock, Smartphone, Monitor } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
@@ -23,6 +23,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoginProcessing, setIsLoginProcessing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [deviceType, setDeviceType] = useState<'mobile' | 'desktop'>('desktop');
   
   // Game State
   const [score, setScore] = useState<number>(0);
@@ -77,6 +78,13 @@ export default function App() {
   const maxEnergy = activeSkin.maxEnergy;
   const regenRate = activeSkin.regenRateSec * 1000;
   const skinClickValue = activeSkin.clickMultiplier;
+
+  // Detect Device Type
+  useEffect(() => {
+    // Basic detection: checks if the primary pointer is coarse (touch)
+    const isTouch = window.matchMedia("(pointer: coarse)").matches;
+    setDeviceType(isTouch ? 'mobile' : 'desktop');
+  }, []);
 
   // Initial Auto-Login Check
   useEffect(() => {
@@ -620,17 +628,35 @@ export default function App() {
              </div>
              <div className="flex flex-col">
                 <span className="font-bold text-sm tracking-wide">{currentUser.username}</span>
-                {isOfflineMode ? (
-                  <div className="flex items-center gap-1 text-[10px] text-amber-500">
-                    <WifiOff className="w-3 h-3" />
-                    <span>Offline Mode</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 text-[10px] text-green-500">
-                    <Cloud className="w-3 h-3" />
-                    <span>Online</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-3">
+                    {/* Connection Status */}
+                    {isOfflineMode ? (
+                      <div className="flex items-center gap-1 text-[10px] text-amber-500">
+                        <WifiOff className="w-3 h-3" />
+                        <span>Offline</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 text-[10px] text-green-500">
+                        <Cloud className="w-3 h-3" />
+                        <span>Online</span>
+                      </div>
+                    )}
+
+                    {/* Device Indicator */}
+                    <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        {deviceType === 'mobile' ? (
+                            <>
+                                <Smartphone className="w-3 h-3" />
+                                <span>Mobile</span>
+                            </>
+                        ) : (
+                            <>
+                                <Monitor className="w-3 h-3" />
+                                <span>Desktop</span>
+                            </>
+                        )}
+                    </div>
+                </div>
              </div>
           </div>
           <button onClick={handleLogout} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400">
